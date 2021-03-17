@@ -19,8 +19,10 @@ namespace Intel.RealSense
 
 #if DEBUG
         private const string dllName = "realsense2d";
+        private const string netDllName = "realsense2-netd";
 #else
         private const string dllName = "realsense2";
+        private const string netDllName = "realsense2-net";
 #endif
 
 
@@ -918,6 +920,10 @@ namespace Intel.RealSense
         [DllImport(dllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr rs2_free_error(IntPtr error);
         #endregion
+
+
+        [DllImport(netDllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr rs2_create_net_device(int apiVersion, [MarshalAs(UnmanagedType.LPStr)] string address, [MarshalAs(UnmanagedType.CustomMarshaler, MarshalTypeRef = typeof(ErrorMarshaler))] out object error);
 
     }
 }
