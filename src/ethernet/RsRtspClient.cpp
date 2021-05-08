@@ -362,6 +362,15 @@ void updateExtrinsicsMap(rs2_video_stream videoStream, std::string extrinsics_st
                                   &extrinsics.translation[1],
                                   &extrinsics.translation[2]);
 
+        for (int i = 0; i < 9; i++)
+        {
+            extrinsics.rotation[i] /= 1000;
+        }
+        for (int i = 0; i < 3; i++)
+        {
+            extrinsics.translation[i] /= 1000;
+        }
+
         // hanle NaN values
         if (params_count != SDP_EXTRINSICS_ARGS)
         {
@@ -454,16 +463,16 @@ void RsRTSPClient::continueAfterDESCRIBE(RTSPClient *rtspClient, int resultCode,
             // intrinsics desirialization should happend at once (usgin json?)
             videoStream.intrinsics.width = subsession->attrVal_int("width");
             videoStream.intrinsics.height = subsession->attrVal_int("height");
-            videoStream.intrinsics.ppx = subsession->attrVal_int("ppx");
-            videoStream.intrinsics.ppy = subsession->attrVal_int("ppy");
-            videoStream.intrinsics.fx = subsession->attrVal_int("fx");
-            videoStream.intrinsics.fy = subsession->attrVal_int("fy");
+            videoStream.intrinsics.ppx = std::stof(subsession->attrVal_str("ppx"));
+            videoStream.intrinsics.ppy = std::stof(subsession->attrVal_str("ppy"));
+            videoStream.intrinsics.fx = std::stof(subsession->attrVal_str("fx"));
+            videoStream.intrinsics.fy = std::stof(subsession->attrVal_str("fy"));
             CompressionFactory::getIsEnabled() = subsession->attrVal_bool("compression");
             videoStream.intrinsics.model = (rs2_distortion)subsession->attrVal_int("model");
 
             for (size_t i = 0; i < 5; i++)
             {
-                videoStream.intrinsics.coeffs[i] = subsession->attrVal_int("coeff_" + i);
+                videoStream.intrinsics.coeffs[i] = std::stof(subsession->attrVal_str("coeff_" + i)) / 1000;
             }
 
             // extrinsics

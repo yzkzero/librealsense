@@ -45,14 +45,14 @@ std::string extrinsics_to_string(rs2_extrinsics extrinsics)
     str.append("rotation:");
     for(float r : extrinsics.rotation)
     {
-        str.append(std::to_string(r));
+        str.append(std::to_string(r * 1000));
         str.append(",");
     }
     str.pop_back();
     str.append("translation:");
-    for(float r : extrinsics.translation)
+    for(float t : extrinsics.translation)
     {
-        str.append(std::to_string(r));
+        str.append(std::to_string(t * 1000));
         str.append(",");
     }
     str.pop_back();
@@ -81,7 +81,7 @@ std::string get_extrinsics_string_per_stream(std::shared_ptr<RsDevice> device, r
             str.append("&");
         }
     }
-
+    
     return str;
 }
 
@@ -100,15 +100,15 @@ std::string getSdpLineForVideoStream(rs2::video_stream_profile& t_videoStream, s
     str.append(getSdpLineForField("usb_type", device.get()->getDevice().get_info(RS2_CAMERA_INFO_USB_TYPE_DESCRIPTOR)));
     str.append(getSdpLineForField("compression", CompressionFactory::getIsEnabled()));
 
-    str.append(getSdpLineForField("ppx", t_videoStream.get_intrinsics().ppx));
-    str.append(getSdpLineForField("ppy", t_videoStream.get_intrinsics().ppy));
-    str.append(getSdpLineForField("fx", t_videoStream.get_intrinsics().fx));
-    str.append(getSdpLineForField("fy", t_videoStream.get_intrinsics().fy));
+    str.append(getSdpLineForField("ppx", std::to_string(t_videoStream.get_intrinsics().ppx).c_str()));
+    str.append(getSdpLineForField("ppy", std::to_string(t_videoStream.get_intrinsics().ppy).c_str()));
+    str.append(getSdpLineForField("fx", std::to_string(t_videoStream.get_intrinsics().fx).c_str()));
+    str.append(getSdpLineForField("fy", std::to_string(t_videoStream.get_intrinsics().fy).c_str()));
     str.append(getSdpLineForField("model", t_videoStream.get_intrinsics().model));
 
     for(size_t i = 0; i < 5; i++)
     {
-        str.append(getSdpLineForField("coeff_" + i, t_videoStream.get_intrinsics().coeffs[i]));
+        str.append(getSdpLineForField("coeff_" + i, std::to_string(t_videoStream.get_intrinsics().coeffs[i] * 1000).c_str()));
     }
 
     str.append(getSdpLineForField("extrinsics", get_extrinsics_string_per_stream(device, t_videoStream).c_str()));
