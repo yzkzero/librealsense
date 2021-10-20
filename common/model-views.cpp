@@ -15,7 +15,6 @@
 #include <opengl3.h>
 
 #include <librealsense2/rs_advanced_mode.hpp>
-#include <librealsense2/rsutil.h>
 #include <librealsense2/rs.hpp>
 
 #include "model-views.h"
@@ -38,6 +37,7 @@
 #include "metadata-helper.h"
 #include "calibration-model.h"
 #include "sw-update/http-downloader.h"
+#include "utilities/filesystem/glob.h"
 
 using namespace rs400;
 using namespace nlohmann;
@@ -721,15 +721,18 @@ namespace rs2
                                     strcpy(buff, buff_str.c_str());
                                 }
                                 float new_value;
-                                if(!utilities::string::string_to_value<float>(buff, new_value))
+                                if (!utilities::string::string_to_value<float>(buff, new_value))
                                 {
                                     error_message = "Invalid float input!";
                                 }
                                 else if (new_value < range.min || new_value > range.max)
                                 {
-                                    error_message = to_string() << new_value
-                                        << " is out of bounds [" << range.min << ", "
-                                        << range.max << "]";
+                                    float val = use_cm_units ? new_value * 100.f : new_value;
+                                    float min = use_cm_units ? range.min * 100.f : range.min;
+                                    float max = use_cm_units ? range.max * 100.f : range.max;
+                                    
+                                    error_message = to_string() << val
+                                        << " is out of bounds [" << min << ", " << max << "]";
                                 }
                                 else
                                 {
@@ -771,15 +774,15 @@ namespace rs2
                             // computing the number of decimal digits taken from the step options' property
                             // this will then be used to format the displayed value
                             auto num_of_decimal_digits = [](float f) {
-                                int res = 0;
-                                while (f && (int)f == 0)
-                                {
-                                    f *= 10.f;
-                                    ++res;
-                                }
-                                return res;
+                                float f_0 = std::fabs(f - (int)f);
+                                std::string s = std::to_string(f_0);
+                                size_t cur_len = s.length();
+                                //removing trailing zeros
+                                while (cur_len > 3 && s[cur_len - 1] == '0')
+                                    cur_len--;
+                                return cur_len - 2;
                             };
-                            int num_of_decimal_digits_displayed = num_of_decimal_digits(range.step);
+                            int num_of_decimal_digits_displayed = (int)num_of_decimal_digits(range.step);
 
                             // displaying in cm instead of meters for D405
                             if (use_cm_units)
@@ -1077,6 +1080,7 @@ namespace rs2
         streaming(false), _pause(false),
         depth_colorizer(std::make_shared<rs2::gl::colorizer>()),
         yuy2rgb(std::make_shared<rs2::gl::yuy_decoder>()),
+        y411(std::make_shared<rs2::gl::y411_decoder>()),
         depth_decoder(std::make_shared<rs2::depth_huffman_decoder>()),
         viewer(viewer),
         detected_objects(device_detected_objects)
@@ -1084,6 +1088,7 @@ namespace rs2
         supported_options = s->get_supported_options();
         restore_processing_block("colorizer", depth_colorizer);
         restore_processing_block("yuy2rgb", yuy2rgb);
+        restore_processing_block("y411", y411);
 
         std::string device_name(dev.get_info(RS2_CAMERA_INFO_NAME));
         std::string sensor_name(s->get_info(RS2_CAMERA_INFO_NAME));
@@ -1275,6 +1280,7 @@ namespace rs2
                     res << vid_prof.width() << " x " << vid_prof.height();
                     push_back_if_not_exists(res_values, std::pair<int, int>(vid_prof.width(), vid_prof.height()));
                     push_back_if_not_exists(resolutions, res.str());
+                    push_back_if_not_exists(resolutions_per_stream[profile.stream_type()], std::pair<int, int>(vid_prof.width(), vid_prof.height()));
                 }
 
                 std::stringstream fps;
@@ -1310,6 +1316,10 @@ namespace rs2
                 sort_together(fps_list.second, fpses_per_stream[fps_list.first]);
             }
             sort_together(shared_fps_values, shared_fpses);
+            for (auto&& res_list : resolutions_per_stream)
+            {
+                sort_resolutions(res_list.second);
+            }
             sort_together(res_values, resolutions);
 
             show_single_fps_list = is_there_common_fps();
@@ -1386,6 +1396,16 @@ namespace rs2
     {
         if (zero_order_artifact_fix)
             viewer.zo_sensors--;
+    }
+
+    void subdevice_model::sort_resolutions(std::vector<std::pair<int, int>>& resolutions) const
+    {
+        std::sort(resolutions.begin(), resolutions.end(),
+            [](const std::pair<int, int>& a, const std::pair<int, int>& b) {
+                if (a.first != b.first)
+                    return (a.first < b.first);
+                return (a.second <= b.second);
+            });
     }
 
     bool subdevice_model::is_there_common_fps()
@@ -1664,48 +1684,8 @@ namespace rs2
 
     bool subdevice_model::is_selected_combination_supported()
     {
-        std::vector<stream_profile> results;
-
-        for (auto&& f : formats)
-        {
-            auto stream = f.first;
-            if (stream_enabled[stream])
-            {
-                auto fps = 0;
-                if (show_single_fps_list)
-                    fps = shared_fps_values[ui.selected_shared_fps_id];
-                else
-                    fps = fps_values_per_stream[stream][ui.selected_fps_id[stream]];
-
-                auto format = format_values[stream][ui.selected_format_id[stream]];
-
-                for (auto&& p : profiles)
-                {
-                    if (auto vid_prof = p.as<video_stream_profile>())
-                    {
-                        if (res_values.size() > 0)
-                        {
-                            auto width = res_values[ui.selected_res_id].first;
-                            auto height = res_values[ui.selected_res_id].second;
-
-                            if (vid_prof.width() == width &&
-                                vid_prof.height() == height &&
-                                p.unique_id() == stream &&
-                                p.fps() == fps &&
-                                p.format() == format)
-                                results.push_back(p);
-                        }
-                    }
-                    else
-                    {
-                        if (p.fps() == fps &&
-                            p.unique_id() == stream &&
-                            p.format() == format)
-                            results.push_back(p);
-                    }
-                }
-            }
-        }
+        bool enforce_inter_stream_policies = false;
+        std::vector<stream_profile> results = get_selected_profiles(enforce_inter_stream_policies);
 
         if (results.size() == 0)
             return false;
@@ -1948,12 +1928,57 @@ namespace rs2
         return results;
     }
 
-    std::vector<stream_profile> subdevice_model::get_selected_profiles()
+    bool subdevice_model::is_ir_calibration_profile() const
+    {
+        // checking format
+        bool is_cal_format = false;
+        for (auto it = stream_enabled.begin(); it != stream_enabled.end(); ++it)
+        {
+            if (it->second)
+            {
+                int selected_format_index = -1;
+                if (ui.selected_format_id.count(it->first) > 0)
+                    selected_format_index = ui.selected_format_id.at(it->first);
+
+                if (format_values.count(it->first) > 0 && selected_format_index > -1)
+                {
+                    auto formats = format_values.at(it->first);
+                    if (formats.size() > selected_format_index)
+                    {
+                        auto format = formats[selected_format_index];
+                        if (format == RS2_FORMAT_Y16)
+                        {
+                            is_cal_format = true;
+                            break;
+                        }
+                    }
+                }                
+            }
+        }
+        return is_cal_format;   
+    }
+
+    std::pair<int, int> subdevice_model::get_max_resolution(rs2_stream stream) const
+    {
+        if (resolutions_per_stream.count(stream) > 0)
+            return resolutions_per_stream.at(stream).back();
+
+        std::stringstream error_message;
+        error_message << "The stream ";
+        error_message << rs2_stream_to_string(stream);
+        error_message << " is not available with this sensor ";
+        error_message << s->get_info(RS2_CAMERA_INFO_NAME);
+        throw std::runtime_error(error_message.str());
+    }
+
+    std::vector<stream_profile> subdevice_model::get_selected_profiles(bool enforce_inter_stream_policies)
     {
         std::vector<stream_profile> results;
 
         std::stringstream error_message;
         error_message << "The profile ";
+
+        bool is_cal_profile = is_ir_calibration_profile();
 
         for (auto&& f : formats)
         {
@@ -1981,12 +2006,19 @@ namespace rs2
                                 << width << "x" << height << " at " << fps << "Hz, "
                                 << rs2_format_to_string(format) << "} ";
 
-                            if (vid_prof.width() == width &&
-                                vid_prof.height() == height &&
-                                p.unique_id() == stream &&
-                                p.fps() == fps &&
-                                p.format() == format)
-                                results.push_back(p);
+                            if (p.unique_id() == stream && p.fps() == fps && p.format() == format)
+                            {
+                                // permitting to add color stream profile to depth sensor
+                                // when infrared calibration is active
+                                if (is_cal_profile && p.stream_type() == RS2_STREAM_COLOR)
+                                {
+                                    auto max_color_res = get_max_resolution(RS2_STREAM_COLOR);
+                                    if (vid_prof.width() == max_color_res.first && vid_prof.height() == max_color_res.second)
+                                        results.push_back(p);
+                                }
+                                else if (vid_prof.width() == width && vid_prof.height() == height)
+                                    results.push_back(p);
+                            }
                         }
                     }
                     else
@@ -2002,7 +2034,7 @@ namespace rs2
                 }
             }
         }
-        if (results.size() == 0)
+        if (results.size() == 0 && enforce_inter_stream_policies)
         {
             error_message << " is unsupported!";
             throw std::runtime_error(error_message.str());
@@ -2119,7 +2151,7 @@ namespace rs2
         try {
             s->start([&, syncer](frame f)
             {
-			    // The condition here must match the condition inside render_loop()!
+                // The condition here must match the condition inside render_loop()!
                 if( viewer.synchronization_enable )
                 {
                     syncer->invoke(f);
@@ -2157,6 +2189,7 @@ namespace rs2
 
             save_processing_block_to_config_file("colorizer", depth_colorizer);
             save_processing_block_to_config_file("yuy2rgb", yuy2rgb);
+            save_processing_block_to_config_file("y411", y411);
 
             for (auto&& pbm : post_processing) pbm->save_to_config_file();
         }
@@ -2393,6 +2426,7 @@ namespace rs2
         profile = p;
         texture->colorize = d->depth_colorizer;
         texture->yuy2rgb = d->yuy2rgb;
+        texture->y411 = d->y411;
         texture->depth_decode = d->depth_decoder;
 
         if (auto vd = p.as<video_stream_profile>())
@@ -3834,9 +3868,12 @@ namespace rs2
                 configurations::update::allow_rc_firmware,
                 false );
             bool is_rc = ( product_line == RS2_PRODUCT_LINE_D400 ) && allow_rc_firmware;
-            std::string available_fw_ver = get_available_firmware_version( product_line );
+            std::string PID = dev.get_info(RS2_CAMERA_INFO_PRODUCT_ID);
+
+            std::string available_fw_ver = get_available_firmware_version( product_line, PID);
 
             std::shared_ptr< firmware_update_manager > manager = nullptr;
+
 
             if( is_upgradeable( fw, available_fw_ver) )
             {
@@ -3844,11 +3881,18 @@ namespace rs2
 
                 static auto table = create_default_fw_table();
 
+                std::vector<uint8_t> image;
+
+                if (table.find({ product_line, PID }) != table.end())
+                    image = table[{product_line, PID}];
+                else
+                    image = table[{product_line, ""}];
+
                 manager = std::make_shared< firmware_update_manager >( not_model,
                                                                        *this,
                                                                        dev,
                                                                        ctx,
-                                                                       table[product_line],
+                                                                       image,
                                                                        true );
             }
 
@@ -3995,6 +4039,28 @@ namespace rs2
         }
 
         refresh_notifications(viewer);
+
+        auto path = get_folder_path( special_folder::user_documents );
+        path += "librealsense2/presets/";
+        try
+        {
+            std::string name = dev.get_info(RS2_CAMERA_INFO_NAME);
+            std::smatch match;
+            if( ! std::regex_search( name, match, std::regex( "^Intel RealSense (\\S+)" ) ) )
+                throw std::runtime_error( "cannot parse device name from '" + name + "'" );
+
+            glob(
+                path,
+                std::string( match[1] ) + " *.preset",
+                [&]( std::string const & file ) {
+                    advanced_mode_settings_file_names.insert( path + file );
+                },
+                false );  // recursive
+        }
+        catch( const std::exception & e )
+        {
+            LOG_WARNING( "Exception caught trying to detect presets: " << e.what() );
+        }
     }
     void device_model::play_defaults(viewer_model& viewer)
     {
@@ -5239,7 +5305,7 @@ namespace rs2
                         default_path.c_str(), default_filename.c_str()))
                     {
                         path = ret;
-                        if (!ends_with(to_lower(path), ".bag")) path += ".bag";
+                        if (!ends_with(utilities::string::to_lower(path), ".bag")) path += ".bag";
                     }
                 }
 
@@ -5710,7 +5776,7 @@ namespace rs2
             for (auto&& p : sub->get_selected_profiles())
             {
                 rs2_stream stream_type = p.stream_type();
-                std::string stream_format_key = to_string() << "stream-" << to_lower(rs2_stream_to_string(stream_type)) << "-format";
+                std::string stream_format_key = to_string() << "stream-" << utilities::string::to_lower(rs2_stream_to_string(stream_type)) << "-format";
                 std::string stream_format_value = rs2_format_to_string(p.format());
 
                 if (stream_type == RS2_STREAM_DEPTH)
@@ -5851,7 +5917,14 @@ namespace rs2
     // Load viewer configuration for stereo module (depth/infrared streams) only
     void device_model::load_viewer_configurations(const std::string& json_str)
     {
-        json j = json::parse(json_str);
+        json j;
+        json raw_j = json::parse(json_str);
+
+        // If the viewer contain a viewer section, look inside it for the viewer parameters,
+        // for backward compatibility, if no viewer section exist, look at the root level
+        auto viewer_section = raw_j.find("viewer");
+        j = (viewer_section != raw_j.end()) ? viewer_section.value() : raw_j;
+
         struct video_stream
         {
             rs2_format format = RS2_FORMAT_ANY;
@@ -5861,6 +5934,7 @@ namespace rs2
         };
 
         std::map<std::pair<rs2_stream, int>, video_stream> requested_streams;
+        
         auto it = j.find("stream-depth-format");
         if (it != j.end())
         {
@@ -6082,15 +6156,27 @@ namespace rs2
 
         const auto save_to_json = [&, serializable](std::string full_filename)
         {
-            if (!ends_with(to_lower(full_filename), ".json")) full_filename += ".json";
+            if (!ends_with(utilities::string::to_lower(full_filename), ".json")) full_filename += ".json";
             std::ofstream outfile(full_filename);
-            json saved_configuraion;
+
+            json j;
+            json *saved_configuraion = nullptr;
+            
+            // place all of the viewer parameters under a viewer section
             if (serializable)
             {
-                saved_configuraion = json::parse(serializable.serialize_json());
+                j = json::parse(serializable.serialize_json());
+                j["viewer"] = json::object();
+                saved_configuraion = &j["viewer"]; // point to the viewer section inside the root
             }
-            save_viewer_configurations(outfile, saved_configuraion);
-            outfile << saved_configuraion.dump(4);
+            else
+            {
+                saved_configuraion = &j;
+            }
+
+
+            save_viewer_configurations(outfile, *saved_configuraion);
+            outfile << j.dump(4); // output all the data to the file (starting at the root)
             outfile.close();
             advanced_mode_settings_file_names.insert(full_filename);
             selected_file_preset = full_filename;
@@ -6270,7 +6356,7 @@ namespace rs2
                             sub->_options_invalidated = true;
                         }
                     }
-                    auto ret = file_dialog_open(open_file, "JavaScript Object Notation (JSON)\0*.json\0", NULL, NULL);
+                    auto ret = file_dialog_open(open_file, "JavaScript Object Notation (JSON | PRESET)\0*.json;*.preset\0", NULL, NULL);
                     if (ret)
                     {
                         error_message = safe_call([&]() { load_json(ret); });
@@ -6285,7 +6371,7 @@ namespace rs2
 
         if (ImGui::IsItemHovered())
         {
-            std::string tooltip = to_string() << "Load pre-configured stereo module settings" << (is_streaming && !load_json_if_streaming ? " (Disabled while streaming)" : "");
+            std::string tooltip = to_string() << "Load pre-configured device settings" << (is_streaming && !load_json_if_streaming ? " (Disabled while streaming)" : "");
             ImGui::SetTooltip("%s", tooltip.c_str());
         }
 
@@ -6314,7 +6400,7 @@ namespace rs2
         }
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("Save current stereo module settings to file");
+            ImGui::SetTooltip("Save current device settings to file");
         }
         ImGui::PopStyleColor(2);
         ImGui::SameLine();
