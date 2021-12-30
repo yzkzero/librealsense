@@ -196,7 +196,7 @@ bool ip_device::init_device_data(rs2::software_device sw_device)
         for(auto stream_profile_to : device_streams)
         {
             int from_key = RsRTSPClient::getPhysicalSensorUniqueKey(stream_profile_from.stream_type(), stream_profile_from.stream_index());
-            int to_key = RsRTSPClient::getPhysicalSensorUniqueKey(stream_profile_from.stream_type(), stream_profile_from.stream_index());
+            int to_key = RsRTSPClient::getPhysicalSensorUniqueKey(stream_profile_to.stream_type(), stream_profile_to.stream_index());
 
             if(minimal_extrinsics_map.find(std::make_pair(from_key, to_key)) == minimal_extrinsics_map.end())
             {
