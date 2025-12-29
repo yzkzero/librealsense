@@ -1,8 +1,27 @@
 /* License: Apache 2.0. See LICENSE file in root directory.
 Copyright(c) 2017 Intel Corporation. All Rights Reserved. */
 
-#include "python.hpp"
-#include "../include/librealsense2/rs.hpp"
+#include "pyrealsense2.h"
+#include <librealsense2/rs.hpp>
+
+#include <rsutils/string/from.h>
+#include <src/image.cpp>  // bad idea? for get_image_bpp
+
+
+namespace {
+
+
+    std::ostream & operator<<( std::ostream & ss, const rs2::frame & self )
+    {
+        ss << rs2_format_to_string( self.get_profile().format() );
+        ss << " #" << self.get_frame_number();
+        ss << " @" << rsutils::string::from( self.get_timestamp() );
+        return ss;
+    }
+
+
+}
+
 
 void init_frame(py::module &m) {
     py::class_<BufData> BufData_py(m, "BufData", py::buffer_protocol());
@@ -39,7 +58,7 @@ void init_frame(py::module &m) {
             }
         }
         else
-            return BufData(const_cast<void*>(self.get_data()), 1, std::string("@B"), 0); };
+            return BufData(const_cast<void*>(self.get_data()), 1, std::string("@B"), self.get_data_size()); };
     
     /* rs_frame.hpp */
     py::class_<rs2::stream_profile> stream_profile(m, "stream_profile", "Stores details about the profile of a stream.");
@@ -47,6 +66,7 @@ void init_frame(py::module &m) {
         .def("stream_index", &rs2::stream_profile::stream_index, "The stream's index")
         .def("stream_type", &rs2::stream_profile::stream_type, "The stream's type")
         .def("format", &rs2::stream_profile::format, "The stream's format")
+        .def("bytes_per_pixel", []( rs2::stream_profile const & self ) { return librealsense::get_image_bpp( self.format() ) / 8; } )
         .def("fps", &rs2::stream_profile::fps, "The streams framerate")
         .def("unique_id", &rs2::stream_profile::unique_id, "Unique index assigned whent the stream was created")
         .def("clone", &rs2::stream_profile::clone, "Clone the current profile and change the type, index and format to input parameters", "type"_a, "index"_a, "format"_a)
@@ -150,14 +170,12 @@ void init_frame(py::module &m) {
                 {
                     ss << "set";
                     for( auto sf : fs )
-                        ss << " " << rs2_format_to_string( sf.get_profile().format() );
+                        ss << "  " << sf;
                 }
                 else
                 {
-                    ss << " " << rs2_format_to_string( self.get_profile().format() );
+                    ss << " " << self;
                 }
-                ss << " #" << self.get_frame_number();
-                ss << " @" << std::fixed << self.get_timestamp();
             }
             ss << ">";
             return ss.str();
@@ -267,7 +285,8 @@ void init_frame(py::module &m) {
 
     py::class_<rs2::motion_frame, rs2::frame> motion_frame(m, "motion_frame", "Extends the frame class with additional motion related attributes and functions");
     motion_frame.def(py::init<rs2::frame>())
-        .def("get_motion_data", &rs2::motion_frame::get_motion_data, "Retrieve the motion data from IMU sensor.")
+        .def("get_motion_data", &rs2::motion_frame::get_motion_data, "Retrieve motion data from a GYRO/ACCEL sensor")
+        .def("get_combined_motion_data", &rs2::motion_frame::get_combined_motion_data, "Retrieve motion data from a MOTION sensor")
         .def_property_readonly("motion_data", &rs2::motion_frame::get_motion_data, "Motion data from IMU sensor. Identical to calling get_motion_data.");
 
     py::class_<rs2::pose_frame, rs2::frame> pose_frame(m, "pose_frame", "Extends the frame class with additional pose related attributes and functions.");

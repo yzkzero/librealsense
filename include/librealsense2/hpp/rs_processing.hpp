@@ -851,6 +851,57 @@ namespace rs2
         }
     };
 
+    class rotation_filter : public filter
+    {
+    public:
+        /**
+         * Create rotation filter
+         * Rotation filter performs rotation of the frames
+         */
+        rotation_filter()
+            : filter( init( std::vector< rs2_stream >{ RS2_STREAM_DEPTH } ), 1 )
+        {
+        }
+
+        rotation_filter( std::vector< rs2_stream > streams_to_rotate )
+            : filter( init( streams_to_rotate ), 1 )
+        {
+        }
+
+        rotation_filter( std::vector< rs2_stream > streams_to_rotate, float value )
+            : filter( init( streams_to_rotate ), 1 )
+        {
+            set_option( RS2_OPTION_ROTATION, value );
+        }
+
+        rotation_filter( filter f )
+            : filter( f )
+        {
+            rs2_error * e = nullptr;
+            if( ! rs2_is_processing_block_extendable_to( f.get(), RS2_EXTENSION_ROTATION_FILTER, &e ) && ! e )
+            {
+                _block.reset();
+            }
+            error::handle( e );
+        }
+
+    private:
+        friend class context;
+
+        std::shared_ptr< rs2_processing_block > init( std::vector< rs2_stream > streams_to_rotate )
+        {
+            rs2_error * e = nullptr;
+
+            rs2_streams_list streams_list;
+            streams_list.list = std::move( streams_to_rotate ); 
+
+            auto block = std::shared_ptr< rs2_processing_block >( rs2_create_rotation_filter_block( streams_list, &e ),
+                                                                  rs2_delete_processing_block );
+            error::handle( e );
+            return block;
+        }
+    };
+
     class temporal_filter : public filter
     {
     public:
@@ -1003,46 +1054,11 @@ namespace rs2
         }
     };
 
-    class zero_order_invalidation : public filter
-    {
-    public:
-        /**
-        * Create zero order fix filter
-        * The filter fixes the zero order artifact
-        */
-        zero_order_invalidation() : filter(init())
-        {}
-
-        zero_order_invalidation(filter f) :filter(f)
-        {
-            rs2_error* e = nullptr;
-            if (!rs2_is_processing_block_extendable_to(f.get(), RS2_EXTENSION_ZERO_ORDER_FILTER, &e) && !e)
-            {
-                _block.reset();
-            }
-            error::handle(e);
-        }
-
-    private:
-        friend class context;
-
-        std::shared_ptr<rs2_processing_block> init()
-        {
-            rs2_error* e = nullptr;
-            auto block = std::shared_ptr<rs2_processing_block>(
-                rs2_create_zero_order_invalidation_block(&e),
-                rs2_delete_processing_block);
-            error::handle(e);
-
-            return block;
-        }
-    };
-
     class depth_huffman_decoder : public filter
     {
     public:
         /**
-        * Create decoder for Huffman-code compressed Depth frames
+        * Deprecated!  - Create decoder for Huffman-code compressed Depth frames
         */
         depth_huffman_decoder() : filter(init())
         {}

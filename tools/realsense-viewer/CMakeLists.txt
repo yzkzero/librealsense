@@ -1,23 +1,23 @@
 # License: Apache 2.0. See LICENSE file in root directory.
-# Copyright(c) 2019 Intel Corporation. All Rights Reserved.
-#  minimum required cmake version: 3.1.0
-cmake_minimum_required(VERSION 3.1.0)
+# Copyright(c) 2019-2024 Intel Corporation. All Rights Reserved.
+cmake_minimum_required(VERSION 3.8)
 
-project(RealsenseToolsRealSenseViewer)
+project(realsense-viewer)
+
+if(WIN32)
+    add_executable( ${PROJECT_NAME} WIN32 "" )
+    target_link_libraries( ${PROJECT_NAME} OpenGL::GL)
+else()
+    add_executable( ${PROJECT_NAME} "" )
+    target_link_libraries( ${PROJECT_NAME} OpenGL::GL dl) # Check the platform and conditionally link OpenGL and libdl (for linux)
+endif()
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
 include_directories(${CMAKE_BINARY_DIR})
 
-if(${BUILD_EASYLOGGINGPP})
-set( ELPP_DIR ../../third-party/easyloggingpp/src )
-    include_directories( ${ELPP_DIR} )
-    set( ELPP_FILES
-        ${ELPP_DIR}/easylogging++.cc
-        ${ELPP_DIR}/easylogging++.h
-    )
-endif()
+using_easyloggingpp( ${PROJECT_NAME} SHARED )
 
 include(../../common/CMakeLists.txt)
 
@@ -25,11 +25,7 @@ if(BUILD_GRAPHICAL_EXAMPLES)
     set(RS_VIEWER_CPP
     ${COMMON_SRC}
     realsense-viewer.cpp
-    ../../third-party/imgui/imgui.cpp
-    ../../third-party/imgui/imgui_draw.cpp
-    ../../third-party/imgui/imgui_impl_glfw.cpp
-    ../../third-party/imgui/imgui-fonts-karla.hpp
-    ../../third-party/imgui/imgui-fonts-fontawesome.hpp
+    ${IMGUI_SOURCES}
     ../../common/realsense-ui-advanced-mode.h
     ../../common/rendering.h
     ../../common/model-views.h
@@ -53,9 +49,18 @@ if(BUILD_GRAPHICAL_EXAMPLES)
     ../../common/rs-config.cpp
     ../../common/os.h
     ../../common/os.cpp
+    ../../common/graph-model.h
+    ../../common/graph-model.cpp
+    ../../third-party/rsutils/include/rsutils/type/eth-config.h
+    ../../third-party/rsutils/include/rsutils/type/eth-config.cpp
+    ../../third-party/implot/implot.cpp
+    ../../third-party/implot/implot.h
+    ../../third-party/implot/implot_internal.h
+    ../../third-party/implot/implot_items.cpp
+
 )
 
-SET(DELAYED 
+SET(DELAYED
     realsense2d.dll
     realsense2-gld.dll
     realsense2.dll
@@ -138,7 +143,7 @@ if(DEFINED INTEL_OPENVINO_DIR  AND  IS_DIRECTORY ${INTEL_OPENVINO_DIR})
 
     include(../../wrappers/openvino/dl_vino_model.cmake)
     # Download model files -- these will go into build/tools/realsense-viewer, which is also
-    # where the sample is run from in Visual Studio 
+    # where the sample is run from in Visual Studio
 
     if(OPENVINO2019)
     dl_vino_model( "README.txt"                              "789e144d6cafa379c8437d2a6860829b6d935a8d" )
@@ -171,12 +176,12 @@ endif()
 
 # config-ui
 if(WIN32)
-    add_executable(realsense-viewer WIN32
-        ${RS_VIEWER_CPP}
-        ${ELPP_FILES}
-        ${CMAKE_CURRENT_SOURCE_DIR}/res/resource.h
-        ${CMAKE_CURRENT_SOURCE_DIR}/res/realsense-viewer.rc
-        ../../common/windows-app-bootstrap.cpp
+    target_sources( ${PROJECT_NAME}
+        PRIVATE
+            ${RS_VIEWER_CPP}
+            ${CMAKE_CURRENT_SOURCE_DIR}/res/resource.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/res/realsense-viewer.rc
+            ../../common/windows-app-bootstrap.cpp
         )
 
     source_group("3rd Party" FILES
@@ -184,6 +189,7 @@ if(WIN32)
         ../../third-party/tinyfiledialogs/tinyfiledialogs.h
         ../../third-party/imgui/imgui.cpp
         ../../third-party/imgui/imgui_draw.cpp
+        ../../third-party/imgui/imgui_impl_opengl3.cpp
         ../../third-party/imgui/imgui_impl_glfw.cpp
         ../../third-party/imgui/imgui-fonts-karla.hpp
         ../../third-party/imgui/imgui-fonts-fontawesome.hpp
@@ -198,13 +204,13 @@ if(WIN32)
     #list(TRANSFORM DELAYED PREPEND " /DELAYLOAD:")  - Requires cmake v3.12
     PREPEND(DELAYED " /DELAYLOAD:" ${DELAYED})
     string(REPLACE ";" " " LD_FLAGS_STR "${DELAYED}")
-    set_target_properties(realsense-viewer PROPERTIES LINK_FLAGS "${LD_FLAGS_STR}")
+    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "${LD_FLAGS_STR}")
 
 else()
-    add_executable(realsense-viewer
-        ${RS_VIEWER_CPP}
-        ${ELPP_FILES}
-    )
+    target_sources( ${PROJECT_NAME}
+        PRIVATE
+            ${RS_VIEWER_CPP}
+        )
 endif()
 
 if(OPENVINO2019)
@@ -215,7 +221,6 @@ if(OPENVINO_NGRAPH)
     target_compile_definitions(realsense-viewer PRIVATE OPENVINO_NGRAPH)
 endif()
 
-source_group("EasyLogging++" FILES ${ELPP_FILES})
 source_group("SW-Update" FILES ${SW_UPDATE_FILES})
 
 include_directories(
@@ -224,40 +229,36 @@ include_directories(
     ../../third-party/tinyfiledialogs
     ${GLFW_SOURCE_DIR}/include
     ../../third-party/imgui
+    ../../third-party/implot
     ../../third-party/glad
     )
 
 
-set_property(TARGET realsense-viewer PROPERTY CXX_STANDARD 11)
+set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 11)
 
 set(RS_VIEWER_LIBS ${GTK3_LIBRARIES} Threads::Threads realsense2-gl)
 
 if (CHECK_FOR_UPDATES)
     message( STATUS "Check for updates capability added to realsense-viewer" )
-    add_dependencies(realsense-viewer libcurl)
+    add_dependencies(${PROJECT_NAME} libcurl)
     set(RS_VIEWER_LIBS ${RS_VIEWER_LIBS} curl)
 endif()
 
 if (IMPORT_DEPTH_CAM_FW)
     add_definitions(-DINTERNAL_FW)
-    target_link_libraries(realsense-viewer fw)
+    target_link_libraries(${PROJECT_NAME} fw)
 endif()
 
-if(BUILD_NETWORK_DEVICE)
-    add_definitions(-DNETWORK_DEVICE)
-    set(RS_VIEWER_LIBS ${RS_VIEWER_LIBS} realsense2-net)
-endif()
+target_link_libraries( ${PROJECT_NAME} ${DEPENDENCIES} ${RS_VIEWER_LIBS} tclap )
 
-target_link_libraries(realsense-viewer ${DEPENDENCIES} ${RS_VIEWER_LIBS})
-
-set_target_properties (realsense-viewer PROPERTIES
+set_target_properties (${PROJECT_NAME} PROPERTIES
     FOLDER Tools
 )
 
-target_include_directories(realsense-viewer PRIVATE ../../src)
+target_include_directories(${PROJECT_NAME} PRIVATE ../../src)
 
 install(
-    TARGETS realsense-viewer
+    TARGETS ${PROJECT_NAME}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 #https://cmake.org/cmake/help/latest/command/install.html

@@ -1,8 +1,9 @@
 /* License: Apache 2.0. See LICENSE file in root directory.
 Copyright(c) 2017 Intel Corporation. All Rights Reserved. */
 
-#include "python.hpp"
-#include "../include/librealsense2/hpp/rs_processing.hpp"
+#include "pyrealsense2.h"
+#include <librealsense2/hpp/rs_processing.hpp>
+#include <memory>
 
 void init_processing(py::module &m) {
     /** rs_processing.hpp **/
@@ -48,8 +49,8 @@ void init_processing(py::module &m) {
 
     py::class_<rs2::processing_block, rs2::options> processing_block(m, "processing_block", "Define the processing block workflow, inherit this class to "
                                                                      "generate your own processing_block.");
-    processing_block.def(py::init([](std::function<void(rs2::frame, rs2::frame_source&)> processing_function) {
-            return new rs2::processing_block(processing_function);
+    processing_block.def(py::init([](std::function<void(rs2::frame, rs2::frame_source*)> processing_function) {
+        return new rs2::processing_block([=](rs2::frame f, rs2::frame_source& fs) {processing_function(f, &fs); });
         }), "processing_function"_a)
         .def("start", [](rs2::processing_block& self, std::function<void(rs2::frame)> f) {
             self.start(f);
@@ -65,13 +66,12 @@ void init_processing(py::module &m) {
             return new rs2::filter(filter_function, queue_size);
         }), "filter_function"_a, "queue_size"_a = 1)
         .def(BIND_DOWNCAST(filter, decimation_filter))
+        .def( BIND_DOWNCAST( filter, rotation_filter ) )
         .def(BIND_DOWNCAST(filter, disparity_transform))
         .def(BIND_DOWNCAST(filter, hole_filling_filter))
         .def(BIND_DOWNCAST(filter, spatial_filter))
         .def(BIND_DOWNCAST(filter, temporal_filter))
         .def(BIND_DOWNCAST(filter, threshold_filter))
-        .def(BIND_DOWNCAST(filter, zero_order_invalidation))
-        .def(BIND_DOWNCAST(filter, depth_huffman_decoder))
         .def(BIND_DOWNCAST(filter, hdr_merge))
         .def(BIND_DOWNCAST(filter, sequence_id_filter))
         .def("__nonzero__", &rs2::filter::operator bool) // Called to implement truth value testing in Python 2
@@ -159,6 +159,9 @@ void init_processing(py::module &m) {
     decimation_filter.def(py::init<>())
         .def(py::init<float>(), "magnitude"_a);
 
+    py::class_< rs2::rotation_filter, rs2::filter > rotation_filter(m, "rotation_filter","Performs rotation of frames." );
+    rotation_filter.def( py::init<>() ).def( py::init< std::vector< rs2_stream > >(), "value"_a );
+
     py::class_<rs2::temporal_filter, rs2::filter> temporal_filter(m, "temporal_filter", "Temporal filter smooths the image by calculating multiple frames "
                                                                   "with alpha and delta settings. Alpha defines the weight of current frame, and delta defines the"
                                                                   "threshold for edge classification and preserving.");
@@ -184,18 +187,12 @@ void init_processing(py::module &m) {
                                                                           "to disparity representation and vice - versa in depth frames");
     disparity_transform.def(py::init<bool>(), "transform_to_disparity"_a = true);
 
-    py::class_<rs2::zero_order_invalidation, rs2::filter> zero_order_invalidation(m, "zero_order_invalidation", "Fixes the zero order artifact");
-    zero_order_invalidation.def(py::init<>());
-
     py::class_<rs2::hole_filling_filter, rs2::filter> hole_filling_filter(m, "hole_filling_filter", "The processing performed depends on the selected hole filling mode.");
     hole_filling_filter.def(py::init<>())
         .def(py::init<int>(), "Possible values for mode:\n"
              "0 - fill_from_left - Use the value from the left neighbor pixel to fill the hole\n"
              "1 - farest_from_around - Use the value from the neighboring pixel which is furthest away from the sensor\n"
              "2 - nearest_from_around - -Use the value from the neighboring pixel closest to the sensor", "mode"_a);
-
-    py::class_<rs2::depth_huffman_decoder, rs2::filter> depth_huffman_decoder(m, "depth_huffman_decoder", "Decompresses Huffman-encoded Depth frame to standartized Z16 format");
-    depth_huffman_decoder.def(py::init<>());
 
     py::class_<rs2::hdr_merge, rs2::filter> hdr_merge(m, "hdr_merge", "Merges depth frames with different sequence ID");
     hdr_merge.def(py::init<>());

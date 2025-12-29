@@ -4,7 +4,7 @@
 #pragma once
 
 #include "notifications.h"
-#include "../src/concurrency.h"
+#include <rsutils/concurrency/concurrency.h>
 #include "../src/algo.h"
 
 #include <random>
@@ -66,12 +66,12 @@ namespace rs2
             RS2_CALIB_ACTION_TARE_GROUND_TRUTH,     // Tare ground truth
             RS2_CALIB_ACTION_FL_CALIB,              // Focal length calibration
             RS2_CALIB_ACTION_UVMAPPING_CALIB,       // UVMapping calibration
+            RS2_CALIB_ACTION_FL_PLUS_CALIB,     // Focal length plus calibration
         };
 
         auto_calib_action action = RS2_CALIB_ACTION_ON_CHIP_CALIB;
+        int host_assistance = 0;
         int step_count_v3 = 256;
-        float laser_status_prev = 0.0f;
-        float thermal_loop_prev = 0.f;
 
         int fl_step_count = 51;
         int fy_scan_range = 40;
@@ -89,6 +89,10 @@ namespace rs2
         float corrected_ratio = 0.0f;
         float tilt_angle = 0.0f;
 
+        const float correction_factor = 0.50f;
+
+        bool tare_health = false;
+
         std::shared_ptr<subdevice_model> _sub;
         std::shared_ptr<subdevice_model> _sub_color;
 
@@ -97,36 +101,52 @@ namespace rs2
         const std::string Y8_FORMAT = "Y8";
         const std::string Z16_FORMAT = "Z16";
         const std::string RGB8_FORMAT = "RGB8";
-
+        std::string device_name_string;
 
         void calibrate();
         void calibrate_fl();
         void calibrate_uv_mapping();
+        //void calibrate_fl_plus();
         void get_ground_truth();
 
         void turn_roi_on();
         void turn_roi_off();
 
+        void save_options_controlled_by_calib();
+        void restore_options_controlled_by_calib();
+
         void start_gt_viewer();
         void start_fl_viewer();
         void start_uvmapping_viewer(bool b3D = false);
+        void start_fl_plus_viewer();
         void stop_viewer();
         void reset_device() { _dev.hardware_reset(); }
 
     private:
+        void save_laser_emitter_state();
+        void save_thermal_loop_state();
+        void restore_laser_emitter_state();
+        void restore_thermal_loop_state();
+        void set_laser_emitter_state( float value );
+        void set_thermal_loop_state( float value );
+
         std::vector<uint8_t> safe_send_command(const std::vector<uint8_t>& cmd, const std::string& name);
         rs2::depth_frame fetch_depth_frame(invoker invoke, int timeout_ms = 5000); // Wait for next depth frame and return it
         std::pair<float, float> get_depth_metrics(invoker invoke);
         void process_flow(std::function<void()> cleanup, invoker invoke) override;
 
         float _health = -1.0f;
-        float _health_1 = -1.0f;
-        float _health_2 = -1.0f;
+        float _health_1 = -1.0f;    //percentage of error, relative to ground truth, before the current iteration.
+        float _health_2 = -1.0f;    //percentage of error, relative to ground truth, after the current iteration.
 
         float _health_nums[4] = { -0.1f, -0.1f, -0.1f, -0.1f };
         std::vector<uint8_t> color_intrin_raw_data;
 
         device _dev;
+
+        bool _options_saved = false;
+        float _laser_status_prev = 0.0f;
+        float _thermal_loop_prev = 0.0f;
 
         bool _was_streaming = false;
         bool _synchronized = false;
@@ -176,9 +196,10 @@ namespace rs2
             RS2_CALIB_STATE_GET_TARE_GROUND_TRUTH_FAILED,     // Failed to calculating the ground truth
             RS2_CALIB_STATE_FL_INPUT,        // Collect input parameters for focal length calib
             RS2_CALIB_STATE_UVMAPPING_INPUT, // Collect input parameters for UVMapping calibration with specific target
+            RS2_CALIB_STATE_FL_PLUS_INPUT,        // Collect input parameters for focal length plus calib
         };
 
-        autocalib_notification_model(std::string name, std::shared_ptr<on_chip_calib_manager> manager, bool expaned);
+        autocalib_notification_model(std::string name, std::shared_ptr<process_manager> manager, bool expaned);
 
         on_chip_calib_manager& get_manager() { return *std::dynamic_pointer_cast<on_chip_calib_manager>(update_manager); }
 

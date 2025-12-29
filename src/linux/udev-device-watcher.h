@@ -4,7 +4,8 @@
 #pragma once
 
 #include "../backend.h"
-#include "../concurrency.h"
+#include "../platform/device-watcher.h"
+#include <rsutils/concurrency/concurrency.h>
 #include "../callback-invocation.h"
 
 #include <libudev.h>
@@ -50,7 +51,7 @@ public:
     bool is_stopped() const override { return ! _active_object.is_active(); }
 
 private:
-    bool foreach_device( std::function< bool( struct udev_device* udev_dev ) > );
+    void foreach_device( std::function< void( struct udev_device* udev_dev ) > );
 };
 
 

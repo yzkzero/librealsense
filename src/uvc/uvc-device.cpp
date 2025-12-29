@@ -2,6 +2,10 @@
 // Copyright(c) 2015 Intel Corporation. All Rights Reserved.
 
 #include "uvc-device.h"
+#include "uvc-parser.h"
+#include "uvc-streamer.h"
+
+#include <rsutils/string/from.h>
 
 #define UVC_AE_MODE_D0_MANUAL   ( 1 << 0 )
 #define UVC_AE_MODE_D1_AUTO     ( 1 << 1 )
@@ -173,7 +177,7 @@ namespace librealsense
                     switch(state)
                     {
                         case D0:
-                            _messenger = _usb_device->open(_info.mi);
+                            _messenger = _usb_device->open(static_cast<uint8_t>(_info.mi));
                             if (_messenger)
                             {
                                 try{
@@ -486,8 +490,8 @@ namespace librealsense
             unsigned char buffer[4] = {0};
             int32_t ret = 0;
             
-            usb_status sts;
-            uint32_t transferred;
+            usb_status sts = RS2_USB_STATUS_OTHER;
+            uint32_t transferred = 0;
             _action_dispatcher.invoke_and_wait([&, this](dispatcher::cancellable_timer c)
             {
                 if (_messenger)
@@ -566,7 +570,7 @@ namespace librealsense
                     unit = _parser->get_input_terminal().bTerminalID;
                     return UVC_CT_AE_PRIORITY_CONTROL;
                 default:
-                    throw linux_backend_exception(to_string() << "invalid option : " << option);
+                    throw linux_backend_exception(rsutils::string::from() << "invalid option : " << option);
             }
         }
 
@@ -575,8 +579,8 @@ namespace librealsense
             unsigned char buffer[4];
             INT_TO_DW(value, buffer);
 
-            usb_status sts;
-            uint32_t transferred;
+            usb_status sts = RS2_USB_STATUS_OTHER;
+            uint32_t transferred = 0;
 
             _action_dispatcher.invoke_and_wait([&, this](dispatcher::cancellable_timer c)
             {
@@ -650,7 +654,7 @@ namespace librealsense
 
         void rs_uvc_device::listen_to_interrupts()
         {
-            auto ctrl_interface = _usb_device->get_interface(_info.mi);
+            auto ctrl_interface = _usb_device->get_interface(static_cast<uint8_t>(_info.mi));
             if (!ctrl_interface)
                 return;
             auto iep = ctrl_interface->first_endpoint(RS2_USB_ENDPOINT_DIRECTION_READ, RS2_USB_ENDPOINT_INTERRUPT);
@@ -852,7 +856,7 @@ namespace librealsense
                                 req,
                                 probe ? (UVC_VS_PROBE_CONTROL << 8) : (UVC_VS_COMMIT_CONTROL << 8),
                                 ctrl->bInterfaceNumber, // When requestType is directed to an interface, the driver automatically passes the interface number in the low byte of index
-                                buf, len, transferred, 0);
+                                buf, static_cast<uint32_t>(len), transferred, 0);
                     } while (sts != RS2_USB_STATUS_SUCCESS && retries++ < 5);
                 }
             }, [this](){ return !_messenger; });

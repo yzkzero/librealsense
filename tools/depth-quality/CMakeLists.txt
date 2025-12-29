@@ -1,27 +1,27 @@
 # License: Apache 2.0. See LICENSE file in root directory.
-# Copyright(c) 2019 Intel Corporation. All Rights Reserved.
-#  minimum required cmake version: 3.1.0
-cmake_minimum_required(VERSION 3.1.0)
+# Copyright(c) 2019-2024 Intel Corporation. All Rights Reserved.
+cmake_minimum_required(VERSION 3.8)
 
-project(RealsenseToolsDepthQuality)
+project( rs-depth-quality )
+
+if(WIN32)
+    add_executable( ${PROJECT_NAME} WIN32 "" )
+    target_link_libraries( ${PROJECT_NAME} OpenGL::GL)
+else()
+    add_executable( ${PROJECT_NAME} "" )
+    target_link_libraries( ${PROJECT_NAME} OpenGL::GL dl) # Check the platform and conditionally link OpenGL and libdl (for linux)
+endif()
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
 include_directories(${CMAKE_BINARY_DIR})
 
-if(${BUILD_EASYLOGGINGPP})
-set( ELPP_DIR ../../third-party/easyloggingpp/src )
-
-include_directories( ${ELPP_DIR} )
-set( ELPP_FILES
-    ${ELPP_DIR}/easylogging++.cc
-    ${ELPP_DIR}/easylogging++.h)
-endif()
+using_easyloggingpp( ${PROJECT_NAME} SHARED )
 
 include(../../common/CMakeLists.txt)
 
-SET(DELAYED 
+SET(DELAYED
     realsense2d.dll
     realsense2-gld.dll
     realsense2.dll
@@ -36,24 +36,30 @@ if(BUILD_GRAPHICAL_EXAMPLES)
         depth-quality-model.cpp
         depth-metrics.h
         ../../common/realsense-ui-advanced-mode.h
-        ../../third-party/imgui/imgui.cpp
-        ../../third-party/imgui/imgui_draw.cpp
-        ../../third-party/imgui/imgui_impl_glfw.cpp
-        ../../third-party/imgui/imgui-fonts-karla.hpp
-        ../../third-party/imgui/imgui-fonts-fontawesome.hpp
+        ${IMGUI_SOURCES}
         ../../third-party/glad/glad.c
         ../../third-party/tinyfiledialogs/tinyfiledialogs.c
         ../../third-party/tinyfiledialogs/tinyfiledialogs.h
+        ../../third-party/rsutils/include/rsutils/type/eth-config.h
+        ../../third-party/rsutils/include/rsutils/type/eth-config.cpp
+        ../../common/graph-model.h
+        ../../common/graph-model.cpp
+        ../../third-party/implot/implot.cpp
+        ../../third-party/implot/implot.h
+        ../../third-party/implot/implot_internal.h
+        ../../third-party/implot/implot_items.cpp
         )
 
     if(WIN32)
-        add_executable(rs-depth-quality WIN32 ${RS_QUALITY_TOOL_CPP}
-                ${ELPP_FILES}
+        target_sources( ${PROJECT_NAME}
+            PRIVATE
+                ${RS_QUALITY_TOOL_CPP}
                 ${CMAKE_CURRENT_SOURCE_DIR}/res/resource.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/res/realsense-viewer.rc
-                ../../common/windows-app-bootstrap.cpp)
+                ../../common/windows-app-bootstrap.cpp
+            )
 
-        set_property(TARGET rs-depth-quality PROPERTY CXX_STANDARD 11)
+        set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 11)
         source_group("Resources" FILES
                 ${CMAKE_CURRENT_SOURCE_DIR}/res/resource.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/res/realsense-viewer.rc)
@@ -64,6 +70,7 @@ if(BUILD_GRAPHICAL_EXAMPLES)
             ../../third-party/imgui/imgui.cpp
             ../../third-party/imgui/imgui_draw.cpp
             ../../third-party/imgui/imgui_impl_glfw.cpp
+            ../../third-party/imgui/imgui_impl_opengl3.cpp
             ../../third-party/imgui/imgui-fonts-karla.hpp
             ../../third-party/imgui/imgui-fonts-fontawesome.hpp)
 
@@ -75,8 +82,8 @@ if(BUILD_GRAPHICAL_EXAMPLES)
 
         include_directories(../../common  ../../third-party
                             ../../third-party/imgui
+                            ../../third-party/implot
                             ../../third-party/glad
-                            ../../third-party/tclap/include
                             ../../third-party/tinyfiledialogs
                             ${CMAKE_CURRENT_SOURCE_DIR}/res/)
 
@@ -84,53 +91,53 @@ if(BUILD_GRAPHICAL_EXAMPLES)
         PREPEND(DELAYED " /DELAYLOAD:" ${DELAYED})
         #infoValue(DELAYED)
         string(REPLACE ";" " " LD_FLAGS_STR "${DELAYED}")
-        set_target_properties(rs-depth-quality PROPERTIES LINK_FLAGS "${LD_FLAGS_STR}")
+        set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "${LD_FLAGS_STR}")
 
     else()
-        add_executable(rs-depth-quality 
-        ${RS_QUALITY_TOOL_CPP}
-        ${ELPP_FILES}
-        )
+        target_sources( ${PROJECT_NAME}
+            PRIVATE
+                ${RS_QUALITY_TOOL_CPP}
+            )
 
         include_directories(../../common  ../../third-party
                             ../../third-party/imgui
+                            ../../third-party/implot
                             ../../third-party/glad
-                            ../../third-party/tinyfiledialogs
-                            ../../third-party/tclap/include)
+                            ../../third-party/tinyfiledialogs )
     endif()
 
-    source_group("EasyLogging++" FILES ${ELPP_FILES})
     source_group("SW-Update" FILES ${SW_UPDATE_FILES})
 
     if (CHECK_FOR_UPDATES)
         message( STATUS "Check for updates capability added to realsense-depth-quality" )
-        add_dependencies(rs-depth-quality libcurl)
-        target_link_libraries(rs-depth-quality curl)
+        add_dependencies(${PROJECT_NAME} libcurl)
+        target_link_libraries(${PROJECT_NAME} curl)
     endif()
-    
-    target_link_libraries(rs-depth-quality ${DEPENDENCIES}
+
+    target_link_libraries(${PROJECT_NAME} ${DEPENDENCIES}
                                            ${GTK3_LIBRARIES}
                                            Threads::Threads
-                                           realsense2-gl)
+                                           realsense2-gl
+                                           tclap )
 
     if (IMPORT_DEPTH_CAM_FW)
         add_definitions(-DINTERNAL_FW)
-        target_link_libraries(rs-depth-quality fw)
+        target_link_libraries(${PROJECT_NAME} fw)
     endif()
-    
-    
 
 
-    set_target_properties (rs-depth-quality PROPERTIES
+
+
+    set_target_properties (${PROJECT_NAME} PROPERTIES
         FOLDER Tools
     )
 
-    target_include_directories(rs-depth-quality PRIVATE ../../src)
+target_include_directories(${PROJECT_NAME} PRIVATE ../../src)
 
     install(
         TARGETS
 
-        rs-depth-quality
+        ${PROJECT_NAME}
 
         RUNTIME DESTINATION
         ${CMAKE_INSTALL_BINDIR}

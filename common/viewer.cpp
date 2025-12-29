@@ -7,8 +7,6 @@
 #endif
 #endif
 
-#include <regex>
-
 #include "viewer.h"
 #include "os.h"
 
@@ -17,11 +15,16 @@
 #include <opengl3.h>
 
 #include <imgui_internal.h>
+#include <realsense_imgui.h>
 
 #define ARCBALL_CAMERA_IMPLEMENTATION
-#include <arcball_camera.h>
-#include "../common/utilities/string/trim-newlines.h"
-#include "../common/utilities/imgui/wrap.h"
+#include <third-party/arcball_camera.h>
+
+#include <rsutils/os/special-folder.h>
+#include <rsutils/string/trim-newlines.h>
+#include <common/utilities/imgui/wrap.h>
+
+#include <regex>
 
 namespace rs2
 {
@@ -49,64 +52,6 @@ namespace rs2
             s.frame_ready(std::move(f));
     }) {}
 
-    void viewer_model::render_pose(rs2::rect stream_rect, float buttons_heights)
-    {
-        int num_of_pose_buttons = 2; // trajectory, info
-
-        // Draw selection buttons on the pose header, the buttons are global to all the streaming devices
-        ImGui::SetCursorPos({ stream_rect.w - 32 * num_of_pose_buttons - 5, buttons_heights });
-
-        bool color_icon = pose_info_object_button.is_pressed(); //draw trajectory is on - color the icon
-        if (color_icon)
-        {
-            ImGui::PushStyleColor(ImGuiCol_Text, light_blue);
-            ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, light_blue);
-        }
-
-        // Draw info object button (is not synchronized with the info buttons in the 2D view)
-        if (ImGui::Button(pose_info_object_button.get_icon().c_str(), { 24, buttons_heights }))
-        {
-            pose_info_object_button.toggle_button();
-        }
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("%s", pose_info_object_button.get_tooltip().c_str());
-        }
-        if (color_icon)
-        {
-            ImGui::PopStyleColor(2);
-        }
-
-        // Draw grid object button
-        ImGui::SameLine();
-
-        color_icon = trajectory_button.is_pressed(); //draw trajectory is on - color the icon
-        if (color_icon)
-        {
-            ImGui::PushStyleColor(ImGuiCol_Text, light_blue);
-            ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, light_blue);
-        }
-        if (ImGui::Button(trajectory_button.get_icon().c_str(), { 24, buttons_heights }))
-        {
-            trajectory_button.toggle_button();
-            for (auto&& s : streams)
-            {
-                if (s.second.profile.stream_type() == RS2_STREAM_POSE)
-                    streams[s.second.profile.unique_id()].dev->tm2.record_trajectory(trajectory_button.is_pressed());
-            }
-        }
-        if (color_icon)
-        {
-            ImGui::PopStyleColor(2);
-        }
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("%s", trajectory_button.get_tooltip().c_str());
-        }
-
-        //ImGui::End();
-    }
-
     // Need out of class declaration to take reference
     const rs2_option save_to_ply::OPTION_IGNORE_COLOR;
     const rs2_option save_to_ply::OPTION_PLY_MESH;
@@ -115,8 +60,9 @@ namespace rs2
 
     void viewer_model::set_export_popup(ImFont* large_font, ImFont* font, rect stream_rect, std::string& error_message, config_file& temp_cfg)
     {
-        float w = 520; // hardcoded size to keep popup layout
-        float h = 325;
+        float font_size = (float)temp_cfg.get( configurations::window::font_size ); 
+        float w = 32.f * font_size;
+        float h = 20.f * font_size;
         float x0 = stream_rect.x + stream_rect.w / 3;
         float y0 = stream_rect.y + stream_rect.h / 3;
         ImGui::SetNextWindowPos({ x0, y0 });
@@ -125,7 +71,7 @@ namespace rs2
         auto flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
 
-        ImGui_ScopePushFont(font);
+        RsImGui_ScopePushFont(font);
         ImGui::PushStyleColor(ImGuiCol_PopupBg, sensor_bg);
         ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, white);
         ImGui::PushStyleColor(ImGuiCol_Text, light_grey);
@@ -135,7 +81,6 @@ namespace rs2
         static export_type tab = export_type::ply;
         if (ImGui::BeginPopupModal("Export", nullptr, flags))
         {
-            ImGui::SetCursorScreenPos({ (float)(x0), (float)(y0 + 30) });
             ImGui::PushStyleColor(ImGuiCol_Button, sensor_bg);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, sensor_bg);
             ImGui::PushFont(large_font);
@@ -165,7 +110,6 @@ namespace rs2
                 ImGui::Text("Polygon File Format defines a flexible systematic scheme for storing 3D data");
                 ImGui::PopStyleColor();
                 ImGui::NewLine();
-                ImGui::SetCursorScreenPos({ (float)(x0 + 15), (float)(y0 + 90) });
                 ImGui::Separator();
                 if (ImGui::Checkbox("Meshing", &mesh))
                 {
@@ -193,7 +137,7 @@ namespace rs2
                 {
                     if (ImGui::IsItemHovered())
                     {
-                        ImGui::SetTooltip("Enable meshing to allow vertex normals calculation");
+                        RsImGui::CustomTooltip("Enable meshing to allow vertex normals calculation");
                     }
                     ImGui::PopStyleColor(2);
                     ImGui::PopStyleVar();
@@ -233,8 +177,7 @@ namespace rs2
             ImGui::PopStyleColor(2); // button color
 
             auto apply = [&]() {
-                config_file::instance() = temp_cfg;
-                update_configuration();
+                update_configuration(&temp_cfg);
             };
 
             ImGui::PushStyleColor(ImGuiCol_Button, button_color);
@@ -243,7 +186,7 @@ namespace rs2
 
             ImGui::SetCursorScreenPos({ (float)(x0 + w / 2), (float)(y0 + h - 30) });
 
-            if (ImGui::Button("Export", ImVec2(120, 0)))
+            if( ImGui::Button( "Export", ImVec2( font_size * 8.f, 0 ) ) )
             {
                 apply();
                 if (!last_points)
@@ -264,7 +207,7 @@ namespace rs2
                         }
 
                         std::string fname(ret);
-                        if (!ends_with(utilities::string::to_lower(fname), curr_exporter->second.extension)) fname += curr_exporter->second.extension;
+                        if (!ends_with(rsutils::string::to_lower(fname), curr_exporter->second.extension)) fname += curr_exporter->second.extension;
 
                         std::unique_ptr<rs2::filter> exporter;
                         if (tab == export_type::ply)
@@ -283,16 +226,16 @@ namespace rs2
             }
             if (ImGui::IsItemHovered())
             {
-                ImGui::SetTooltip("%s", "Save settings and export file");
+                RsImGui::CustomTooltip("%s", "Save settings and export file");
             }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(120, 0)))
+            if( ImGui::Button( "Cancel", ImVec2( font_size * 8.f, 0 ) ) )
             {
                 ImGui::CloseCurrentPopup();
             }
             if (ImGui::IsItemHovered())
             {
-                ImGui::SetTooltip("%s", "Close window without saving any changes to the settings");
+                RsImGui::CustomTooltip("%s", "Close window without saving any changes to the settings");
             }
 
             ImGui::PopStyleColor(3);
@@ -304,7 +247,7 @@ namespace rs2
 
     bool big_button(bool* status,
         ux_window& win,
-        int x, int y,
+        float x, float y,
         const char* icon,
         const char* label,
         bool dropdown,
@@ -316,6 +259,7 @@ namespace rs2
         auto disabled = !enabled;
         auto font = win.get_font();
         auto large_font = win.get_large_font();
+        float font_size = (float)win.get_font_size();
 
         bool hovered = false;
         bool clicked = false;
@@ -339,29 +283,31 @@ namespace rs2
             ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, header_color);
         }
 
-        ImGui::SetCursorPos({float(x), float(y)});
+        float button_width = font_size * 3.8f;
+
+        ImGui::SetCursorPos( { x, y } );
         ImGui::PushFont(large_font);
-        clicked = clicked || ImGui::Button(icon, { 60, 50 });
+        clicked = clicked || ImGui::Button( icon, { button_width, 50 } );
         ImGui::PopFont();
         hovered = hovered || ImGui::IsItemHovered();
 
-        ImGui::SetCursorPos({float(x + 45), float(y)});
+        ImGui::SetCursorPos( { x + button_width - font_size, y } );
         ImGui::PushFont(font);
         if (dropdown)
         {
-            clicked = clicked || ImGui::Button(u8"\uf078", { 20, 55 });
+            clicked = clicked || ImGui::Button(u8"\uf078", { font_size, 55 } );
             hovered = hovered || ImGui::IsItemHovered();
         }
 
-        ImGui::SetCursorPos({ float(x), float(y + 35)});
-        clicked = clicked || ImGui::Button(label, { 60, 20 });
+        ImGui::SetCursorPos( { x, y + 35 } );
+        clicked = clicked || ImGui::Button( label, { button_width, 20 } );
         ImGui::PopFont();
         hovered = hovered || ImGui::IsItemHovered();
 
         if (hovered)
         {
             win.link_hovered();
-            ImGui::SetTooltip("%s", description);
+            RsImGui::CustomTooltip("%s", description);
         }
 
         if (clicked && !disabled)
@@ -397,42 +343,13 @@ namespace rs2
         int selected_depth_source = -1;
         std::vector<std::string> depth_sources_str;
         std::vector<int> depth_sources;
-        int i = 0;
-        for (auto&& s : streams)
-        {
-            if (s.second.is_stream_visible() &&
-                s.second.profile.stream_type() == RS2_STREAM_DEPTH)
-            {
-                auto stream_origin_iter = streams_origin.find(s.second.profile.unique_id());
-                if (selected_depth_source_uid == -1)
-                {
-                    if ( stream_origin_iter != streams_origin.end() &&
-                        streams.find( stream_origin_iter->second ) != streams.end())
-                    {
-                        selected_depth_source_uid = stream_origin_iter->second;
-                    }
-                }
-                if ( stream_origin_iter != streams_origin.end() && stream_origin_iter->second == selected_depth_source_uid)
-                {
-                    selected_depth_source = i;
-                }
-
-                depth_sources.push_back(s.second.profile.unique_id());
-
-                auto dev_name = s.second.dev ? s.second.dev->dev.get_info(RS2_CAMERA_INFO_NAME) : "Unknown";
-                auto stream_name = rs2_stream_to_string(s.second.profile.stream_type());
-
-                depth_sources_str.push_back(to_string() << dev_name << " " << stream_name);
-
-                i++;
-            }
-        }
+        init_depth_uid(selected_depth_source, depth_sources_str, depth_sources);
 
         int selected_tex_source = 0;
         std::vector<std::string> tex_sources_str;
         std::vector<int> tex_sources;
         std::vector<rs2::stream_profile> tex_profiles;
-        i = 0;
+        int i = 0;
         for (auto&& s : streams)
         {
             if (s.second.is_stream_visible() &&
@@ -468,7 +385,7 @@ namespace rs2
                     std::string stream_name = rs2_stream_to_string(s.second.profile.stream_type());
                     if (s.second.profile.stream_index())
                         stream_name += "_" + std::to_string(s.second.profile.stream_index());
-                    tex_sources_str.push_back(to_string() << dev_name << " " << stream_name);
+                    tex_sources_str.push_back( rsutils::string::from() << dev_name << " " << stream_name );
 
                     i++;
                 }
@@ -498,7 +415,7 @@ namespace rs2
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, header_window_bg);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, header_window_bg);
 
-        std::string label = to_string() << "header of 3dviewer";
+        std::string label = "header of 3dviewer";
 
         ImGui::GetWindowDrawList()->AddRectFilled({ stream_rect.x, stream_rect.y },
                      { stream_rect.x + stream_rect.w, stream_rect.y + top_bar_height }, ImColor(sensor_bg));
@@ -506,7 +423,8 @@ namespace rs2
         ImGui::SetCursorPos({ 0, 0 });
         auto cursor = ImGui::GetCursorScreenPos();
 
-        auto left = 5;
+        float left = 5.f;
+        float button_width = win.get_font_size() * 3.8f;
 
         const auto has_stream = tex_sources_str.size() && depth_sources_str.size();
 
@@ -532,7 +450,7 @@ namespace rs2
                 paused = true;
             }
         }
-        left += 60;
+        left += button_width;
 
         // ------------ Reset Viewport ---------------
 
@@ -544,7 +462,7 @@ namespace rs2
             reset_camera();
         }
 
-        left += 60;
+        left += button_width;
 
         // ------------    Lock Mode  ---------------
 
@@ -566,7 +484,7 @@ namespace rs2
                 synchronization_enable = true;
             }
         }
-        left += 70;
+        left += button_width + 10;
 
         ImGui::GetWindowDrawList()->AddLine({ cursor.x + left - 1, cursor.y + 5 },
             { cursor.x + left - 1, cursor.y + top_bar_height - 5 }, ImColor(grey));
@@ -599,7 +517,7 @@ namespace rs2
                     s.second.texture->get_last_frame() &&
                     s.second.profile.stream_type() == RS2_STREAM_DEPTH)
                 {
-                    std::string id = to_string() << depth_sources_str[i] << "##DepthSource-" << i;
+                    std::string id = rsutils::string::from() << depth_sources_str[i] << "##DepthSource-" << i;
 
                     bool selected = i == selected_depth_source;
                     if (ImGui::MenuItem(id.c_str(), nullptr, &selected))
@@ -622,7 +540,7 @@ namespace rs2
         {
             select_3d_source = false;
         }
-        left += 80;
+        left += button_width + 20;
 
         // ------------ Texture Selection --------------
 
@@ -645,7 +563,7 @@ namespace rs2
 
             for (int i = 0; i < tex_sources_str.size(); i++)
             {
-                std::string id = to_string() << tex_sources_str[i] << "##TexSource-" << i;
+                std::string id = rsutils::string::from() << tex_sources_str[i] << "##TexSource-" << i;
 
                 bool selected = i == selected_tex_source;
                 if (ImGui::MenuItem(id.c_str(), nullptr, &selected))
@@ -664,7 +582,7 @@ namespace rs2
             select_tex_source = false;
         }
 
-        left += 80;
+        left += button_width + 20;
 
         // ------------ Shader Selection --------------
         const auto shader_selection_popup = "Shading Selection";
@@ -704,7 +622,7 @@ namespace rs2
         {
             select_shader_source = false;
         }
-        left += 80;
+        left += button_width + 20;
 
         //-----------------------------
 
@@ -733,23 +651,7 @@ namespace rs2
                 _measurements.enable();
             }
         }
-        left += 60;
-
-        // -------------------- Trajectory (T265) -------------------
-
-        active = trajectory_button.is_pressed();
-        if (big_button(&active, win, 5 + left, 0, u8"\uf1b0",
-            "Route", false, pose_render, "Show 6-dof Pose Trajectory\nRequires T265 tracking device"))
-        {
-            trajectory_button.toggle_button();
-            for (auto&& s : streams)
-            {
-                if (s.second.profile.stream_type() == RS2_STREAM_POSE)
-                    streams[s.second.profile.unique_id()].dev->tm2.record_trajectory(trajectory_button.is_pressed());
-            }
-        }
-
-        left += 60;
+        left += button_width;
 
         // -------------------- Export ------------------
 
@@ -764,7 +666,7 @@ namespace rs2
             ImGui::OpenPopup("Export");
         }
 
-        left += 60;
+        left += button_width;
 
 
         ImGui::PopStyleColor(5);
@@ -838,7 +740,7 @@ namespace rs2
                 std::string tmp = realsense_udev_rules;
                 tmp.erase(tmp.find_last_of("\n") + 1);
                 const std::string udev = tmp;
-                float udev_file_ver{}, built_in_file_ver{};
+                float udev_file_ver{0}, built_in_file_ver{0};
 
                 // The udev-rules file shall start with version token expressed as ##Version=xx.yy##
                 std::regex udev_ver_regex("^##Version=(\\d+\\.\\d+)##");
@@ -867,7 +769,9 @@ namespace rs2
 
             if (create_file)
             {
-                std::string tmp_filename = to_string() << get_folder_path(special_folder::app_data) << "/.99-realsense-libusb.rules";
+                std::string tmp_filename
+                    = rsutils::os::get_special_folder( rsutils::os::special_folder::app_data )  // ~/.
+                    + "99-realsense-libusb.rules";
 
                 std::ofstream out(tmp_filename.c_str());
                 out << realsense_udev_rules;
@@ -885,12 +789,14 @@ namespace rs2
         _hidden_options.emplace(RS2_OPTION_STREAM_FORMAT_FILTER);
         _hidden_options.emplace(RS2_OPTION_STREAM_INDEX_FILTER);
         _hidden_options.emplace(RS2_OPTION_FRAMES_QUEUE_SIZE);
-        _hidden_options.emplace(RS2_OPTION_SENSOR_MODE);
         _hidden_options.emplace(RS2_OPTION_NOISE_ESTIMATION);
+        _hidden_options.emplace(RS2_OPTION_REGION_OF_INTEREST);
     }
 
-    void viewer_model::update_configuration()
+    void viewer_model::update_configuration(config_file* new_cfg)
     {
+        if (new_cfg)
+            config_file::instance() = *new_cfg;
         rs2_error* e = nullptr;
         auto version = rs2_get_api_version(&e);
         if (e) rs2::error::handle(e);
@@ -936,10 +842,17 @@ namespace rs2
         auto min_severity = (rs2_log_severity)config_file::instance().get_or_default(
             configurations::viewer::log_severity, 2);
 
-        if (config_file::instance().get_or_default(
-            configurations::viewer::log_to_console, false))
+        if( ! _disable_log_to_console )
         {
-            rs2::log_to_console(min_severity);
+            if( config_file::instance().get_or_default(
+                configurations::viewer::log_to_console, false ) )
+            {
+                rs2::log_to_console( min_severity );
+            }
+            else
+            {
+                rs2::log_to_console( RS2_LOG_SEVERITY_NONE );
+            }
         }
         if (config_file::instance().get_or_default(
             configurations::viewer::log_to_file, false))
@@ -957,21 +870,21 @@ namespace rs2
 
 
 
-    viewer_model::viewer_model( context & ctx_ )
+    viewer_model::viewer_model( context & ctx_, bool disable_log_to_console )
         : ppf( *this )
         , ctx( ctx_ )
         , frameset_alloc( this )
         , synchronization_enable( true )
         , synchronization_enable_prev_state(true)
-        , zo_sensors( 0 )
         , _support_ir_reflectivity( false )
+        , _disable_log_to_console( disable_log_to_console )
     {
 
         syncer = std::make_shared<syncer_model>();
         updates = std::make_shared<updates_model>();
         reset_camera();
         rs2_error* e = nullptr;
-        not_model->add_log(to_string() << "librealsense version: " << api_version_to_string(rs2_get_api_version(&e)) << "\n");
+        not_model->add_log( "librealsense version: " + api_version_to_string( rs2_get_api_version( &e ) ) + "\n" );
 
         update_configuration();
 
@@ -1031,9 +944,9 @@ namespace rs2
 
     void rs2::viewer_model::show_popup(const ux_window& window, const popup& p)
     {
-        auto font_14 = window.get_font();
+        auto font_dynamic = window.get_font();
 
-        ImGui_ScopePushFont(font_14);
+        RsImGui_ScopePushFont(font_dynamic);
         ImGui::PushStyleColor(ImGuiCol_PopupBg, sensor_bg);
         ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, white);
         ImGui::PushStyleColor(ImGuiCol_Text, light_grey);
@@ -1097,14 +1010,16 @@ namespace rs2
             std::string wrapped_msg;
             try
             {
-                auto trimmed_msg = utilities::string::trim_newlines(msg);
+                auto trimmed_msg = rsutils::string::trim_newlines(msg);
                 wrapped_msg = utilities::imgui::wrap(trimmed_msg, 500);
             }
             catch (...)
             {
                 wrapped_msg = msg; // Revert to original text on wrapping failure
-                not_model->output.add_log(RS2_LOG_SEVERITY_WARN, __FILE__, __LINE__,
-                    to_string() << "Wrapping of error message text failed!");
+                not_model->output.add_log( RS2_LOG_SEVERITY_WARN,
+                                           __FILE__,
+                                           __LINE__,
+                                           "Wrapping of error message text failed!" );
             }
 
             ImGui::Text("RealSense error calling:");
@@ -1174,16 +1089,16 @@ namespace rs2
     void viewer_model::show_icon(ImFont* font_18, const char* label_str, const char* text, int x, int y, int id,
         const ImVec4& text_color, const std::string& tooltip)
     {
-        ImGui_ScopePushFont(font_18);
+        RsImGui_ScopePushFont(font_18);
 
-        std::string label = to_string() << label_str << id;
+        std::string label = rsutils::string::from() << label_str << id;
 
         ImGui::SetCursorScreenPos({(float)x, (float)y});
         ImGui::PushStyleColor(ImGuiCol_Text, text_color);
         ImGui::Text("%s", text);
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered() && tooltip != "")
-            ImGui::SetTooltip("%s", tooltip.c_str());
+            RsImGui::CustomTooltip("%s", tooltip.c_str());
 
     }
     void viewer_model::show_paused_icon(ImFont* font_18, int x, int y, int id)
@@ -1203,7 +1118,7 @@ namespace rs2
         ImGui::SetCursorScreenPos({ (min_x + max_x) / 2.f - 150, (min_y + max_y) / 2.f - 20 });
 
         ImGui::PushStyleColor(ImGuiCol_Text, sensor_header_light_blue);
-        std::string text = to_string() << "Nothing is streaming! Toggle " << textual_icons::toggle_off << " to start";
+        std::string text = rsutils::string::from() << "Nothing is streaming! Toggle " << textual_icons::toggle_off << " to start";
         ImGui::Text("%s", text.c_str());
         ImGui::PopStyleColor();
 
@@ -1214,7 +1129,7 @@ namespace rs2
 
     void viewer_model::show_rendering_not_supported(ImFont* font_18, int min_x, int min_y, int max_x, int max_y, rs2_format format)
     {
-        static utilities::time::periodic_timer update_string(std::chrono::milliseconds(200));
+        static rsutils::time::periodic_timer update_string(std::chrono::milliseconds(200));
         static int counter = 0;
         static std::string to_print;
         auto pos = ImGui::GetCursorScreenPos();
@@ -1222,10 +1137,10 @@ namespace rs2
         ImGui::PushFont(font_18);
         ImGui::SetCursorScreenPos({ min_x + max_x / 2.f - 210, min_y + max_y / 2.f - 20 });
         ImGui::PushStyleColor(ImGuiCol_Text, yellowish);
-        std::string text = to_string() << textual_icons::exclamation_triangle;
+        std::string text = rsutils::string::from() << textual_icons::exclamation_triangle;
         ImGui::Text("%s", text.c_str());
         ImGui::SetCursorScreenPos({ min_x + max_x / 2.f - 180, min_y + max_y / 2.f - 20 });
-        text = to_string() <<  " The requested format " << format << " is not supported for rendering  ";
+        text = rsutils::string::from() <<  " The requested format " << format << " is not supported for rendering  ";
 
         if (update_string)
         {
@@ -1273,13 +1188,28 @@ namespace rs2
         auto cell_width = static_cast<float>(r.w / factor);
         auto cell_height = static_cast<float>(r.h / complement);
 
-        auto it = active_streams.begin();
+        // using the active streams sorted acc to stream type and stream index
+        // typical order will then be: depth, color, ir1, ir2, motion....
+        std::vector<stream_model*> active_streams_ordered;
+        for (auto&& active_stream : active_streams)
+        {
+            active_streams_ordered.push_back(active_stream);
+        }
+
+        std::sort(active_streams_ordered.begin(), active_streams_ordered.end(),
+            [](const stream_model* sm1, const stream_model* sm2)
+            {
+                return (sm1->profile.stream_type() < sm2->profile.stream_type()) ||
+                    ((sm1->profile.stream_type() == sm2->profile.stream_type()) && (sm1->profile.stream_index() < sm2->profile.stream_index()));
+            });
+
+        auto it = active_streams_ordered.begin();
         for (auto x = 0; x < factor; x++)
         {
             for (auto y = 0; y < complement; y++)
             {
                 // There might be spare boxes at the end (3 streams in 2x2 array for example)
-                if (it == active_streams.end()) break;
+                if (it == active_streams_ordered.end()) break;
 
                 rect rxy = { r.x + x * cell_width, r.y + y * cell_height + top_bar_height,
                     cell_width, cell_height - top_bar_height };
@@ -1413,16 +1343,6 @@ namespace rs2
                     continue;
                 }
 
-                if( f.is< pose_frame >() )  // Aggregate the trajectory in pause mode to make the
-                                            // path consistent
-                {
-                    auto dev = streams[f.get_profile().unique_id()].dev;
-                    if( dev )
-                    {
-                        dev->tm2.update_model_trajectory( f.as< pose_frame >(), ! paused );
-                    }
-                }
-
                 auto texture = upload_frame( std::move( f ) );
 
                 if( ( selected_tex_source_uid == -1 && f.get_profile().format() == RS2_FORMAT_Z16 )
@@ -1453,8 +1373,8 @@ namespace rs2
 
         ImGui::SetNextWindowPos({ viewer_rect.x, viewer_rect.y });
         ImGui::SetNextWindowSize({ viewer_rect.w, viewer_rect.h });
-
-        ImGui::Begin("Viewport", nullptr, { viewer_rect.w, viewer_rect.h }, 0.f, flags);
+        ImGui::SetNextWindowBgAlpha(0.f);
+        ImGui::Begin("Viewport", nullptr,flags);
 
         try
         {
@@ -1496,7 +1416,7 @@ namespace rs2
         // up = cross(cross(look, world_up), look)
         {
             float3 look = { target.x - pos.x, target.y - pos.y, target.z - pos.z };
-            look = look.normalize();
+            look = look.normalized();
 
             float world_up[3] = { 0.0f, 1.0f, 0.0f };
 
@@ -1550,7 +1470,7 @@ namespace rs2
             top_y_ruler = s_model.curr_info_rect.y + s_model.curr_info_rect.h + ruler_distance_offset;
         }
 
-        static const auto left_x_colored_ruler_offset = 50;
+        static const auto left_x_colored_ruler_offset = 55;
         static const auto colored_ruler_width = 20;
         const auto left_x_colored_ruler = stream_width - left_x_colored_ruler_offset;
         const auto right_x_colored_ruler = stream_width - (left_x_colored_ruler_offset - colored_ruler_width);
@@ -1579,7 +1499,7 @@ namespace rs2
             auto relative_mouse_y = ImGui::GetMousePos().y - top_y_ruler;
             auto y = (bottom_y_ruler - top_y_ruler) - relative_mouse_y;
             ss << std::fixed << std::setprecision(2) << (y / ratio) << ruler_units;
-            ImGui::SetTooltip("%s", ss.str().c_str());
+            RsImGui::CustomTooltip("%s", ss.str().c_str());
             colored_ruler_opac = 1.f;
             numbered_ruler_background_opac = hovered_numbered_ruler_opac;
         }
@@ -1694,7 +1614,7 @@ namespace rs2
         ImFont *font1, ImFont *font2, size_t dev_model_num,
         const mouse_info &mouse, std::string& error_message)
     {
-        static utilities::time::periodic_timer every_sec(std::chrono::seconds(1));
+        static rsutils::time::periodic_timer every_sec(std::chrono::seconds(1));
         static bool icon_visible = false;
         if (every_sec) icon_visible = !icon_visible;
         float alpha = icon_visible ? 1.f : 0.2f;
@@ -1726,7 +1646,7 @@ namespace rs2
 
             if (!stream_mv.is_stream_alive())
             {
-                std::string message = to_string() << textual_icons::exclamation_triangle << " No Frames Received!";
+                std::string message = rsutils::string::from() << textual_icons::exclamation_triangle << " No Frames Received!";
                 show_icon(font2, "warning_icon", message.c_str(),
                     static_cast<int>(stream_rect.center().x - 100),
                     static_cast<int>(stream_rect.center().y - 25),
@@ -1761,15 +1681,45 @@ namespace rs2
                 {
                     case RS2_STREAM_GYRO: /* Fall Through */
                     case RS2_STREAM_ACCEL:
-                    {
-                        auto motion = streams[stream].texture->get_last_frame().as<motion_frame>();
-                        if (motion.get())
+                        if( rs2::frame frame = streams[stream].texture->get_last_frame() )
                         {
-                            auto axis = motion.get_motion_data();
-                            stream_mv.show_stream_imu(font1, stream_rect, axis, mouse);
+                            auto motion = frame.as< motion_frame >();
+                            if( motion.get() )
+                            {
+                                auto axis = motion.get_motion_data();
+                                stream_mv.show_stream_imu( font1,
+                                                           stream_rect,
+                                                           axis,
+                                                           mouse,
+                                                           stream_type == RS2_STREAM_GYRO ? "Radians/Sec" : "Meter/Sec^2" );
+                            }
                         }
                         break;
-                    }
+
+                    case RS2_STREAM_MOTION:
+                        if( rs2::frame frame = streams[stream].texture->get_last_frame() )
+                        {
+                            auto & motion = *reinterpret_cast< const rs2_combined_motion * >( frame.get_data() );
+                            auto height = stream_mv.show_stream_imu( font1,
+                                                                     stream_rect,
+                                                                     { (float)motion.linear_acceleration.x,
+                                                                       (float)motion.linear_acceleration.y,
+                                                                       (float)motion.linear_acceleration.z },
+                                                                     mouse,
+                                                                     "Meter/Sec^2",
+                                                                     "Linear Acceletion" );
+                            stream_mv.show_stream_imu( font1,
+                                                       stream_rect,
+                                                       { (float)motion.angular_velocity.x,
+                                                         (float)motion.angular_velocity.y,
+                                                         (float)motion.angular_velocity.z },
+                                                       mouse,
+                                                       "Radians/Sec",
+                                                       "Angular Velocity",
+                                                       height + 9 );
+                        }
+                        break;
+
                     case RS2_STREAM_POSE:
                     {
                         if (streams[stream].show_stream_details)
@@ -1878,12 +1828,12 @@ namespace rs2
 
                     // Don't draw text in boxes that are too small...
                     auto h = bbox.h;
-                    ImGui::PushStyleColor( ImGuiCol_Text, ImColor( 1.f, 1.f, 1.f, a ) );
+                    ImGui::PushStyleColor( ImGuiCol_Text, ImVec4( 1.f, 1.f, 1.f, a ) );
                     ImColor bg( dark_sensor_bg.x, dark_sensor_bg.y, dark_sensor_bg.z, dark_sensor_bg.w * a );
 
                     if( fabs(object.mean_depth) > 0.f )
                     {
-                        std::string str = to_string() << std::setprecision( 2 ) << object.mean_depth << " m";
+                        std::string str = rsutils::string::from() << std::setprecision( 2 ) << object.mean_depth << " m";
                         auto size = ImGui::CalcTextSize( str.c_str() );
                         if( size.y < h  &&  size.x < bbox.w )
                         {
@@ -2067,67 +2017,6 @@ namespace rs2
             { 0 , 0, 1, 0 },
             { 0, 0, 0, 1 }
         };
-        rs2::matrix4 rx(_rx);
-        rs2::matrix4 rz(_rz);
-
-        int stream_num = 0; // counter to locate the pose info window correctly (currently works for up to 3 streaming devices)
-        pose_frame pose = frame{};
-        for (auto&& stream : streams)
-        {
-            if (stream.second.profile.stream_type() == RS2_STREAM_POSE)
-            {
-                auto f = stream.second.texture->get_last_frame();
-                if (!f.is<pose_frame>())
-                {
-                    continue;
-                }
-
-                pose = f;
-                rs2_pose pose_data = pose.get_pose_data();
-
-                auto t = tm2_pose_to_world_transformation(pose_data);
-                float model[4][4];
-                t.to_column_major((float*)model);
-                auto m = model;
-
-                r1 = m * rx;
-                r2 = rz * m * rx;
-
-                // set the pose transformation as the model matrix to draw the axis
-                glMatrixMode(GL_MODELVIEW);
-                glPushMatrix();
-                glLoadMatrixf(view);
-
-                glMultMatrixf((float*)_rx);
-
-                streams[f.get_profile().unique_id()].dev->tm2.draw_trajectory(trajectory_button.is_pressed());
-
-                // remove model matrix from the rest of the render
-                glPopMatrix();
-
-                _cam_renderer.set_matrix(RS2_GL_MATRIX_CAMERA, r2 * view_mat);
-                _cam_renderer.set_matrix(RS2_GL_MATRIX_PROJECTION, perspective_mat);
-
-                if (f)
-                {
-                    glDisable(GL_DEPTH_TEST);
-                    glEnable(GL_BLEND);
-
-                    glBlendFunc(GL_ONE, GL_ONE);
-
-                    // Render camera model (based on source_frame camera type)
-                    f.apply_filter(_cam_renderer);
-
-                    glDisable(GL_BLEND);
-                    glEnable(GL_DEPTH_TEST);
-                }
-
-                stream_num++;
-            }
-        }
-
-
-        check_gl_error();
 
         {
             float tiles = 24;
@@ -2161,7 +2050,7 @@ namespace rs2
 
         check_gl_error();
 
-        if (!pose && !_pc_selected)
+        if (!_pc_selected)
         {
             glMatrixMode(GL_MODELVIEW);
             glPushMatrix();
@@ -2221,6 +2110,10 @@ namespace rs2
         {
             auto vf_profile = last_points.get_profile().as<video_stream_profile>();
             // Non-linear correspondence customized for non-flat surface exploration
+
+            if (vf_profile.width() <= 0)
+                throw std::runtime_error("Profile width must be greater than 0.");
+
             glPointSize(std::sqrt(viewer_rect.w / vf_profile.width()));
 
             auto tex = last_texture->get_gl_handle();
@@ -2346,7 +2239,7 @@ namespace rs2
 
         glDisable(GL_DEPTH_TEST);
 
-        if (ImGui::IsKeyPressed('R') || ImGui::IsKeyPressed('r'))
+        if (ImGui::GetIO().KeysDown[ImGuiKey_R])
         {
             reset_camera();
         }
@@ -2406,10 +2299,10 @@ namespace rs2
         {
             ImGui::OpenPopup("More Options");
         }
-
+        ImGui::PopFont();
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("%s", "More Options...");
+            RsImGui::CustomTooltip("%s", "More Options...");
         }
 
         if (window.is_fullscreen())
@@ -2426,13 +2319,12 @@ namespace rs2
             }
             if (ImGui::IsItemHovered())
             {
-                ImGui::SetTooltip("Exit the App");
+                RsImGui::CustomTooltip("Exit the App");
                 window.link_hovered();
             }
             ImGui::PopStyleColor(3);
         }
 
-        ImGui::PopFont();
 
         ImGui::PushStyleColor(ImGuiCol_Text, black);
         ImGui::PushStyleColor(ImGuiCol_PopupBg, almost_white_bg);
@@ -2442,36 +2334,39 @@ namespace rs2
 
         ImGui::PushFont(window.get_font());
 
-        auto settings = "Settings";
-        auto about = "About";
+        const char* menu_items[] = { "Report Issue", "Intel Store", "Settings", "About" };
         bool open_settings_popup = false;
         bool open_about_popup = false;
 
-        ImGui::SetNextWindowPos({ window.width() - 100, panel_y });
-        ImGui::SetNextWindowSize({ 100, 90 });
+        ImGui::SetNextWindowPos({ window.width() - 130, panel_y });
+        auto separator_height = 2;
+        auto menu_items_len = sizeof( menu_items ) / sizeof( menu_items[0] );
+        auto popup_height = ( ImGui::GetTextLineHeightWithSpacing() + 2 ) * menu_items_len + separator_height;
+        ImVec2 popup_size = { 6.f * window.get_font_size(), popup_height };
+        ImGui::SetNextWindowSize( popup_size );
 
         if (ImGui::BeginPopup("More Options"))
         {
             settings_open = true;
 
-            if (ImGui::Selectable("Report Issue"))
+            if( ImGui::Selectable( menu_items[0] ) )
             {
                 open_issue(devices);
             }
 
-            if (ImGui::Selectable("Intel Store"))
+            if( ImGui::Selectable( menu_items[1] ) )
             {
                 open_url("https://store.intelrealsense.com/");
             }
 
-            if (ImGui::Selectable(settings))
+            if( ImGui::Selectable( menu_items[2] ) )
             {
                 open_settings_popup = true;
             }
 
             ImGui::Separator();
 
-            if (ImGui::Selectable(about))
+            if( ImGui::Selectable( menu_items[3] ) )
             {
                 open_about_popup = true;
             }
@@ -2494,7 +2389,7 @@ namespace rs2
         {
             _measurements.disable();
             temp_cfg = config_file::instance();
-            ImGui::OpenPopup(settings);
+            ImGui::OpenPopup(menu_items[2]);
             reload_required = false;
             refresh_required = false;
             tab = config_file::instance().get_or_default(configurations::viewer::settings_tab, 0);
@@ -2509,16 +2404,16 @@ namespace rs2
             ImGui::SetNextWindowSize({ w, h });
 
             flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar;
 
-            ImGui_ScopePushFont(window.get_font());
+            RsImGui_ScopePushFont(window.get_font());
             ImGui::PushStyleColor(ImGuiCol_PopupBg, sensor_bg);
             ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, white);
             ImGui::PushStyleColor(ImGuiCol_Text, light_grey);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(15, 15));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 1);
 
-            if (ImGui::BeginPopupModal(settings, nullptr, flags))
+            if (ImGui::BeginPopupModal(menu_items[2], nullptr, flags))
             {
                 if (ImGui::IsWindowHovered()) window.set_hovered_over_input();
 
@@ -2576,7 +2471,12 @@ namespace rs2
 
                 ImGui::SetCursorScreenPos({ (float)(x0 + 15), (float)(y0 + 65) });
                 ImGui::Separator();
-
+                ImGui::PushStyleColor(ImGuiCol_Text, white);
+                ImGui::PushStyleColor(ImGuiCol_PopupBg, dark_window_background);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(5, 5));
+                ImVec2 child_size = ImVec2(0, ImGui::GetContentRegionAvail().y-50);
+                if (ImGui::BeginChild("ScrollableRegion", child_size, true, ImGuiWindowFlags_AlwaysVerticalScrollbar))
+                {
                 if (tab == 0)
                 {
                     int recording_setting = temp_cfg.get(configurations::record::file_save_mode);
@@ -2627,16 +2527,37 @@ namespace rs2
 
                 if (tab == 1)
                 {
+                    // Font oversample slider
                     int font_samples = temp_cfg.get(configurations::performance::font_oversample);
                     ImGui::Text("Font Samples: ");
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Increased font samples produce nicer text, but require more GPU memory, sometimes resulting in boxes instead of font characters");
+                        RsImGui::CustomTooltip("Increased font samples produce nicer text, but require more GPU memory, sometimes resulting in boxes instead of font characters");
+
                     ImGui::SameLine();
                     ImGui::PushItemWidth(80);
+                    float slider_position_x = ImGui::GetCursorPosX();
+
                     if (ImGui::SliderInt("##font_samples", &font_samples, 1, 8))
                     {
                         reload_required = true;
                         temp_cfg.set(configurations::performance::font_oversample, font_samples);
+                    }
+                    ImGui::PopItemWidth();
+
+                    // Font slider
+                    int font_size = temp_cfg.get( configurations::window::font_size );
+                    ImGui::Text( "Font Size: " );
+                    if( ImGui::IsItemHovered() )
+                        RsImGui::CustomTooltip( "Viewer Font Size" );
+                    
+                    ImGui::SameLine();
+                    ImGui::PushItemWidth( 80 );
+                    ImGui::SetCursorPosX( slider_position_x );
+
+                    if( ImGui::SliderInt( "##font_size", &font_size, 16, 20 ) )
+                    {
+                        reload_required = true;
+                        temp_cfg.set( configurations::window::font_size, font_size );
                     }
                     ImGui::PopItemWidth();
 
@@ -2648,7 +2569,7 @@ namespace rs2
                         temp_cfg.set(configurations::performance::glsl_for_rendering, gpu_rendering);
                     }
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Using OpenGL 3 shaders is a widely supported way to boost rendering speeds on modern GPUs.");
+                        RsImGui::CustomTooltip("Using OpenGL 3 shaders is a widely supported way to boost rendering speeds on modern GPUs.");
 
                     bool gpu_processing = temp_cfg.get(configurations::performance::glsl_for_processing);
                     if (ImGui::Checkbox("Use GLSL for Processing", &gpu_processing))
@@ -2657,7 +2578,7 @@ namespace rs2
                         temp_cfg.set(configurations::performance::glsl_for_processing, gpu_processing);
                     }
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Using OpenGL 3 shaders for depth data processing can reduce CPU utilisation.");
+                        RsImGui::CustomTooltip("Using OpenGL 3 shaders for depth data processing can reduce CPU utilisation.");
 
                     if (gpu_processing && !gpu_rendering)
                     {
@@ -2673,7 +2594,7 @@ namespace rs2
                         temp_cfg.set(configurations::performance::enable_msaa, msaa);
                     }
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("MSAA will improve the rendering quality of edges at expense of greater GPU memory utilisation.");
+                        RsImGui::CustomTooltip("MSAA will improve the rendering quality of edges at expense of greater GPU memory utilisation.");
 
                     if (msaa)
                     {
@@ -2695,7 +2616,7 @@ namespace rs2
                         temp_cfg.set(configurations::performance::show_fps, show_fps);
                     }
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Show application refresh rate in window title\nThis rate is unrelated to camera FPS and measures application responsivness");
+                        RsImGui::CustomTooltip("Show application refresh rate in window title\nThis rate is unrelated to camera FPS and measures application responsivness");
 
 
                     bool vsync = temp_cfg.get(configurations::performance::vsync);
@@ -2705,7 +2626,7 @@ namespace rs2
                         temp_cfg.set(configurations::performance::vsync, vsync);
                     }
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Vertical sync will try to synchronize application framerate to the monitor refresh-rate (usually limiting the framerate to 60)");
+                        RsImGui::CustomTooltip("Vertical sync will try to synchronize application framerate to the monitor refresh-rate (usually limiting the framerate to 60)");
 
                     bool fullscreen = temp_cfg.get(configurations::window::is_fullscreen);
                     if (ImGui::Checkbox("Fullscreen (F8)", &fullscreen))
@@ -2720,7 +2641,7 @@ namespace rs2
                         temp_cfg.set(configurations::performance::show_skybox, show_skybox);
                     }
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("When enabled, this option provides background to the 3D view, instead of leaving it blank.\nThis is purely cosmetic");
+                        RsImGui::CustomTooltip("When enabled, this option provides background to the 3D view, instead of leaving it blank.\nThis is purely cosmetic");
 
                     bool enable_occlusion_invalidation = temp_cfg.get(configurations::performance::occlusion_invalidation);
                     if (ImGui::Checkbox("Perform Occlusion Invalidation", &enable_occlusion_invalidation))
@@ -2728,35 +2649,43 @@ namespace rs2
                         temp_cfg.set(configurations::performance::occlusion_invalidation, enable_occlusion_invalidation);
                     }
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Occlusions are a natural side-effect of having multiple sensors\nWhen this option is enabled, the SDK will filter out occluded pixels");
+                        RsImGui::CustomTooltip("Occlusions are a natural side-effect of having multiple sensors\nWhen this option is enabled, the SDK will filter out occluded pixels");
                 }
 
-                if (tab == 2)
+                if( tab == 2 )
                 {
-                    ImGui::Text("Units of Measurement: ");
+                    ImGui::Text( "Units of Measurement: " );
                     ImGui::SameLine();
 
-                    int metric_system = temp_cfg.get(configurations::viewer::metric_system);
+                    int metric_system = temp_cfg.get( configurations::viewer::metric_system );
                     std::vector<std::string> unit_systems;
-                    unit_systems.push_back("Imperial System");
-                    unit_systems.push_back("Metric System");
+                    unit_systems.push_back( "Imperial System" );
+                    unit_systems.push_back( "Metric System" );
 
-                    ImGui::PushItemWidth(150);
-                    if (draw_combo_box("##units_system", unit_systems, metric_system))
+                    ImGui::PushItemWidth( 150 );
+                    if( draw_combo_box( "##units_system", unit_systems, metric_system ) )
                     {
-                        temp_cfg.set(configurations::viewer::metric_system, metric_system);
+                        temp_cfg.set( configurations::viewer::metric_system, metric_system );
                     }
                     ImGui::PopItemWidth();
 
                     ImGui::Separator();
 
-                    ImGui::Text("librealsense has built-in logging capabilities.");
-                    ImGui::Text("Logs may contain API calls, timing of frames, OS error messages and file-system links, but no actual frame content.");
+                    ImGui::Text( "librealsense has built-in logging capabilities." );
+                    ImGui::Text( "Logs may contain API calls, timing of frames, OS error messages and file-system links, but no actual frame content." );
 
-                    bool log_to_console = temp_cfg.get(configurations::viewer::log_to_console);
-                    if (ImGui::Checkbox("Output librealsense log to console", &log_to_console))
+                    bool log_to_console = temp_cfg.get( configurations::viewer::log_to_console );
+                    if( _disable_log_to_console )
+                        ImGui::PushStyleVar( ImGuiStyleVar_Alpha, 0.6f );
+                    if( ImGui::Checkbox( "Output librealsense log to console", &log_to_console ) )
+                        temp_cfg.set( configurations::viewer::log_to_console, log_to_console );
+                    if( _disable_log_to_console )
                     {
-                        temp_cfg.set(configurations::viewer::log_to_console, log_to_console);
+                        ImGui::PopStyleVar();
+                        if( ImGui::IsItemHovered() )
+                        {
+                            RsImGui::CustomTooltip( "%s", "--debug was specified; this cannot be applied without a restart" );
+                        }
                     }
                     bool log_to_file = temp_cfg.get(configurations::viewer::log_to_file);
                     if (ImGui::Checkbox("Output librealsense log to file", &log_to_file))
@@ -2816,7 +2745,7 @@ namespace rs2
                     }
 
                     {
-                        ImGui::Text("HWLoggerEvents.xml Path:");
+                        ImGui::Text("FW logs XML file:");
                         ImGui::SameLine();
                         static char logpath[256];
                         memset(logpath, 0, 256);
@@ -2827,6 +2756,19 @@ namespace rs2
                         {
                             path_str = logpath;
                             temp_cfg.set(configurations::viewer::hwlogger_xml, path_str);
+                        }
+
+                        ImGui::SameLine();
+                        if( ImGui::Button( "FW logs XML" ) )
+                        {
+                            auto ret = file_dialog_open(open_file, "XML file\0*.xml\0", NULL, NULL);
+                            if( ret )
+                            {
+                                memset( logpath, 0, 256 );
+                                memcpy( logpath, ret, std::min( 255, static_cast< int >( strlen( ret ) ) ) );
+                                path_str = logpath;
+                                temp_cfg.set( configurations::viewer::hwlogger_xml, path_str );
+                            }
                         }
                     }
 
@@ -2848,7 +2790,7 @@ namespace rs2
                             try
                             {
                                 std::string filename = ret;
-                                filename = utilities::string::to_lower(filename);
+                                filename = rsutils::string::to_lower(filename);
                                 if (!ends_with(filename, ".json")) filename += ".json";
                                 temp_cfg.save(filename.c_str());
                             }
@@ -2870,6 +2812,34 @@ namespace rs2
                             catch (...){}
                         }
                     }
+
+                    ImGui::Separator();
+                    bool enable_dds = temp_cfg.get_nested<bool>("context.dds.enabled" , false);
+                    int domain_id = temp_cfg.get_nested<int>("context.dds.domain" , 0);
+                    if( ImGui::Checkbox( "Enable DDS", &enable_dds ) )
+                    {
+                        temp_cfg.set_nested("context.dds.enabled", enable_dds);
+                    }
+                    if( enable_dds )
+                    {
+                        ImGui::SameLine();
+                        ImGui::SetCursorPosX( ImGui::GetCursorPosX() + 50 );
+                        ImGui::PushItemWidth( 150.0f );
+                        ImGui::Text( "Domain ID" );
+                        ImGui::SameLine();
+                        if( ImGui::InputInt( "##Domain ID", &domain_id ) )
+                        {
+                            if( domain_id < 0 )
+                                domain_id = 0;
+                            else if( domain_id > 232 )
+                                domain_id = 232;
+                            temp_cfg.set_nested("context.dds.domain", domain_id);
+                        }
+                    }
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 0.8f));
+                    ImGui::Text(u8"\uf071 DDS changes will take effect only after restarting the application ");
+                    ImGui::PopStyleColor();
+
                 }
 
                 if (tab == 3)
@@ -2882,7 +2852,7 @@ namespace rs2
                     }
                     if (ImGui::IsItemHovered())
                     {
-                        ImGui::SetTooltip("%s", "When firmware of the device is below the version bundled with this software release\nsuggest firmware update");
+                        RsImGui::CustomTooltip("%s", "When firmware of the device is below the version bundled with this software release\nsuggest firmware update");
                     }
 #ifdef CHECK_FOR_UPDATES
                     ImGui::Separator();
@@ -2890,7 +2860,7 @@ namespace rs2
                     ImGui::Text("%s", "SW/FW Updates From Server:");
                     if (ImGui::IsItemHovered())
                     {
-                        ImGui::SetTooltip("%s", "Select the server URL of the SW/FW updates information");
+                        RsImGui::CustomTooltip("%s", "Select the server URL of the SW/FW updates information");
                     }
                     ImGui::SameLine();
 
@@ -2917,7 +2887,7 @@ namespace rs2
                     }
                     if (ImGui::IsItemHovered())
                     {
-                        ImGui::SetTooltip("%s", "Add file:// prefix to use a local DB file ");
+                        RsImGui::CustomTooltip("%s", "Add file:// prefix to use a local DB file ");
                     }
 
                     if (!official_url)
@@ -2929,6 +2899,8 @@ namespace rs2
                         }
                     }
 #endif
+                }
+                ImGui::EndChild();
                 }
 
                 ImGui::Separator();
@@ -2945,13 +2917,12 @@ namespace rs2
                 }
 
                 auto apply = [&](){
-                    config_file::instance() = temp_cfg;
                     window.on_reload_complete = [this](){
                         _skybox.reset();
                     };
                     if (reload_required) window.reload();
                     else if (refresh_required) window.refresh();
-                    update_configuration();
+                    update_configuration(&temp_cfg);
 
                     if (refresh_updates)
                         for (auto&& dev : devices)
@@ -2966,7 +2937,7 @@ namespace rs2
                 }
                 if (ImGui::IsItemHovered())
                 {
-                    ImGui::SetTooltip("%s", "Save settings and close");
+                    RsImGui::CustomTooltip("%s", "Save settings and close");
                 }
                 ImGui::SameLine();
 
@@ -2980,7 +2951,7 @@ namespace rs2
                 ImGui::PopStyleColor(2);
                 if (ImGui::IsItemHovered())
                 {
-                    ImGui::SetTooltip("%s", "Save settings");
+                    RsImGui::CustomTooltip("%s", "Save settings");
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel", ImVec2(120, 0)))
@@ -2989,9 +2960,10 @@ namespace rs2
                 }
                 if (ImGui::IsItemHovered())
                 {
-                    ImGui::SetTooltip("%s", "Close window without saving any changes to the settings");
+                    RsImGui::CustomTooltip("%s", "Close window without saving any changes to the settings");
                 }
-
+                ImGui::PopStyleColor(2);
+                ImGui::PopStyleVar();
                 ImGui::EndPopup();
             }
 
@@ -3002,28 +2974,28 @@ namespace rs2
         if (open_about_popup)
         {
             _measurements.disable();
-            ImGui::OpenPopup(about);
+            ImGui::OpenPopup(menu_items[3]);
         }
 
         {
-            float w = 590.f;
-            float h = 300.f;
+            float w = 590.f + window.get_font_size() * 6.f;
+            float h = 300.f + window.get_font_size();
             float x0 = (window.width() - w) / 2.f;
             float y0 = (window.height() - h) / 2.f;
             ImGui::SetNextWindowPos({ x0, y0 });
             ImGui::SetNextWindowSize({ w, h });
 
             flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar;
 
-            ImGui_ScopePushFont(window.get_font());
+            RsImGui_ScopePushFont(window.get_font());
             ImGui::PushStyleColor(ImGuiCol_PopupBg, sensor_bg);
             ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, white);
             ImGui::PushStyleColor(ImGuiCol_Text, light_grey);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(15, 15));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 1);
 
-            if (ImGui::BeginPopupModal(about, nullptr, flags))
+            if (ImGui::BeginPopupModal(menu_items[3], nullptr, flags))
             {
                 ImGui::Image((void*)(intptr_t)window.get_splash().get_gl_handle(),
                              ImVec2(w - 30, 100), {0.20f, 0.38f}, {0.80f, 0.56f});
@@ -3035,7 +3007,7 @@ namespace rs2
 
                 ImGui::Text("Full source code is available at"); ImGui::SameLine();
                 auto github_pos = ImGui::GetCursorPos();
-                ImGui::Text("github.com/IntelRealSense/librealsense.");
+                ImGui::Text("github.com/realsenseai/librealsense.");
 
                 ImGui::Text("This software is distributed under the"); ImGui::SameLine();
                 auto license_pos = ImGui::GetCursorPos();
@@ -3063,11 +3035,11 @@ namespace rs2
                 hyperlink(window, "Intel RealSense", "https://realsense.intel.com/");
 
                 ImGui::SetCursorPos({ github_pos.x - 4, github_pos.y - 3 });
-                hyperlink(window, "github.com/IntelRealSense/librealsense", "https://github.com/IntelRealSense/librealsense/");
+                hyperlink(window, "github.com/realsenseai/librealsense", "https://github.com/realsenseai/librealsense/");
 
                 ImGui::SetCursorPos({ license_pos.x - 4, license_pos.y - 3 });
 
-                hyperlink(window, "Apache License, Version 2.0", "https://raw.githubusercontent.com/IntelRealSense/librealsense/master/LICENSE");
+                hyperlink(window, "Apache License, Version 2.0", "https://raw.githubusercontent.com/realsenseai/librealsense/master/LICENSE");
 
                 ImGui::PopStyleColor(4);
 
@@ -3127,22 +3099,22 @@ namespace rs2
         auto x_axis = cross(dir, up);
         auto step = sec_since_update * 0.3f;
 
-        if (ImGui::IsKeyPressed('w') || ImGui::IsKeyPressed('W'))
+        if (ImGui::GetIO().KeysDown[ImGuiKey_W])
         {
             pos = pos + dir * step;
             target = target + dir * step;
         }
-        if (ImGui::IsKeyPressed('s') || ImGui::IsKeyPressed('S'))
+        if (ImGui::GetIO().KeysDown[ImGuiKey_S])
         {
             pos = pos - dir * step;
             target = target - dir * step;
         }
-        if (ImGui::IsKeyPressed('d') || ImGui::IsKeyPressed('D'))
+        if (ImGui::GetIO().KeysDown[ImGuiKey_D])
         {
             pos = pos + x_axis * step;
             target = target + x_axis * step;
         }
-        if (ImGui::IsKeyPressed('a') || ImGui::IsKeyPressed('A'))
+        if (ImGui::GetIO().KeysDown[ImGuiKey_A])
         {
             pos = pos - x_axis * step;
             target = target - x_axis * step;
@@ -3159,7 +3131,7 @@ namespace rs2
             auto cy = mouse.cursor.y + overflow.y;
             auto py = mouse.prev_cursor.y + overflow.y;
 
-            auto dragging = ImGui::IsKeyDown(GLFW_KEY_LEFT_CONTROL);
+            auto dragging = ImGui::GetIO().KeysDown[GLFW_KEY_LEFT_CONTROL];
 
             // Limit how much user mouse can jump between frames
             // This can work poorly when the app FPS is really terrible (< 10)
@@ -3408,7 +3380,7 @@ namespace rs2
                 _measurements.show_tooltip(window);
         }
 
-        if (ImGui::IsKeyPressed(' '))
+        if (ImGui::IsKeyPressed(ImGuiKey_Space))
         {
             if (paused)
             {
@@ -3472,5 +3444,40 @@ namespace rs2
         }
 
         return results;
+    }
+
+    void viewer_model::init_depth_uid(int& selected_depth_source, std::vector<std::string>& depth_sources_str, std::vector<int>& depth_sources)
+    {
+        int i = 0;
+
+        for (auto&& s : streams)
+        {
+            if (s.second.is_stream_visible() &&
+                s.second.profile.stream_type() == RS2_STREAM_DEPTH)
+            {
+                auto stream_origin_iter = streams_origin.find(s.second.profile.unique_id());
+                if (selected_depth_source_uid == -1)
+                {
+                    if (stream_origin_iter != streams_origin.end() &&
+                        streams.find(stream_origin_iter->second) != streams.end())
+                    {
+                        selected_depth_source_uid = stream_origin_iter->second;
+                    }
+                }
+                if (stream_origin_iter != streams_origin.end() && stream_origin_iter->second == selected_depth_source_uid)
+                {
+                    selected_depth_source = i;
+                }
+
+                depth_sources.push_back(s.second.profile.unique_id());
+
+                auto dev_name = s.second.dev ? s.second.dev->dev.get_info(RS2_CAMERA_INFO_NAME) : "Unknown";
+                auto stream_name = rs2_stream_to_string(s.second.profile.stream_type());
+
+                depth_sources_str.push_back(rsutils::string::from() << dev_name << " " << stream_name);
+
+                i++;
+            }
+        }
     }
 }

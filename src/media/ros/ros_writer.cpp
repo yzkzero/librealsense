@@ -2,18 +2,21 @@
 // Copyright(c) 2019 Intel Corporation. All Rights Reserved.
 
 #include "proc/decimation-filter.h"
+#include "proc/rotation-filter.h"
 #include "proc/threshold.h"
 #include "proc/disparity-transform.h"
 #include "proc/spatial-filter.h"
 #include "proc/temporal-filter.h"
 #include "proc/hole-filling-filter.h"
-#include "proc/zero-order.h"
-#include "proc/depth-decompress.h"
 #include "proc/hdr-merge.h"
 #include "proc/sequence-id-filter.h"
 #include "ros_writer.h"
-#include "l500/l500-motion.h"
-#include "l500/l500-depth.h"
+#include "core/pose-frame.h"
+#include "core/motion-frame.h"
+#include <src/core/sensor-interface.h>
+#include <src/core/device-interface.h>
+
+#include <rsutils/string/from.h>
 
 namespace librealsense
 {
@@ -105,9 +108,9 @@ namespace librealsense
         for (int i = 0; i < static_cast<rs2_frame_metadata_value>(rs2_frame_metadata_value::RS2_FRAME_METADATA_COUNT); i++)
         {
             rs2_frame_metadata_value type = static_cast<rs2_frame_metadata_value>(i);
-            if (frame->supports_frame_metadata(type))
+            rs2_metadata_type md;
+            if (frame->find_metadata(type, &md))
             {
-                auto md = frame->get_frame_metadata(type);
                 diagnostic_msgs::KeyValue md_msg;
                 md_msg.key = librealsense::get_string(type);
                 md_msg.value = std::to_string(md);
@@ -175,7 +178,8 @@ namespace librealsense
     {
         sensor_msgs::Image image;
         auto vid_frame = dynamic_cast<librealsense::video_frame*>(frame.frame);
-        assert(vid_frame != nullptr);
+        if (!vid_frame)
+            throw std::runtime_error("Frame is not video frame");
 
         image.width = static_cast<uint32_t>(vid_frame->get_width());
         image.height = static_cast<uint32_t>(vid_frame->get_height());
@@ -222,6 +226,23 @@ namespace librealsense
             imu_msg.angular_velocity.x = data_ptr[0];
             imu_msg.angular_velocity.y = data_ptr[1];
             imu_msg.angular_velocity.z = data_ptr[2];
+        }
+        else if (stream_id.stream_type == RS2_STREAM_MOTION)
+        {
+            auto data_imu = *reinterpret_cast<const rs2_combined_motion*>(frame.frame->get_frame_data());
+            // orientation part
+            imu_msg.orientation.x = data_imu.orientation.x;
+            imu_msg.orientation.y = data_imu.orientation.y;
+            imu_msg.orientation.z = data_imu.orientation.z;
+            imu_msg.orientation.w = data_imu.orientation.w;
+            // GYRO part
+            imu_msg.angular_velocity.x = data_imu.angular_velocity.x;
+            imu_msg.angular_velocity.y = data_imu.angular_velocity.y;
+            imu_msg.angular_velocity.z = data_imu.angular_velocity.z;
+            // ACCEL part
+            imu_msg.linear_acceleration.x = data_imu.linear_acceleration.x;
+            imu_msg.linear_acceleration.y = data_imu.linear_acceleration.y;
+            imu_msg.linear_acceleration.z = data_imu.linear_acceleration.z;
         }
         else
         {
@@ -297,13 +318,13 @@ namespace librealsense
         //Write frame's timestamp as metadata
         diagnostic_msgs::KeyValue frame_timestamp_msg;
         frame_timestamp_msg.key = FRAME_TIMESTAMP_MD_STR;
-        frame_timestamp_msg.value = to_string() << std::hexfloat << std::fixed << pose->get_frame_timestamp();
+        frame_timestamp_msg.value = rsutils::string::from() << std::hexfloat << std::fixed << pose->get_frame_timestamp();
         write_message(md_topic, timestamp, frame_timestamp_msg);
 
         //Write frame's number as external param
         diagnostic_msgs::KeyValue frame_num_msg;
         frame_num_msg.key = FRAME_NUMBER_MD_STR;
-        frame_num_msg.value = to_string() << pose->get_frame_number();
+        frame_num_msg.value = rsutils::string::from( pose->get_frame_number() );
         write_message(md_topic, timestamp, frame_num_msg);
 
         // Write the rest of the frame metadata and stream extrinsics
@@ -398,14 +419,6 @@ namespace librealsense
             }
             break;
         }
-        case RS2_EXTENSION_DEBUG:
-            break;
-            //case RS2_EXTENSION_OPTION:
-            //{
-            //    auto option = SnapshotAs<RS2_EXTENSION_OPTION>(snapshot);
-            //    write_sensor_option({ device_id, sensor_id }, timestamp, *option);
-            //    break;
-            //}
         case RS2_EXTENSION_OPTIONS:
         {
             auto options = SnapshotAs<RS2_EXTENSION_OPTIONS>(snapshot);
@@ -413,20 +426,6 @@ namespace librealsense
             break;
         }
 
-        case RS2_EXTENSION_L500_DEPTH_SENSOR:
-        {
-            auto l500_depth_sensor_data = SnapshotAs<RS2_EXTENSION_L500_DEPTH_SENSOR>(snapshot);
-            write_l500_data({ device_id, sensor_id }, timestamp, l500_depth_sensor_data);
-            break;
-        }
-        case RS2_EXTENSION_VIDEO:
-        case RS2_EXTENSION_ROI:
-        case RS2_EXTENSION_DEPTH_SENSOR:
-        case RS2_EXTENSION_COLOR_SENSOR:
-        case RS2_EXTENSION_MOTION_SENSOR:
-        case RS2_EXTENSION_FISHEYE_SENSOR:
-        case RS2_EXTENSION_DEPTH_STEREO_SENSOR:
-            break;
         case RS2_EXTENSION_VIDEO_PROFILE:
         {
             auto profile = SnapshotAs<RS2_EXTENSION_VIDEO_PROFILE>(snapshot);
@@ -452,7 +451,7 @@ namespace librealsense
             break;
         }
         default:
-            throw invalid_value_exception(to_string() << "Failed to Write Extension Snapshot: Unsupported extension \"" << librealsense::get_string(type) << "\"");
+            throw invalid_value_exception( rsutils::string::from() << "Failed to Write Extension Snapshot: Unsupported extension \"" << librealsense::get_string(type) << "\"");
         }
     }
 
@@ -475,7 +474,7 @@ namespace librealsense
     {
         float value = option.query();
         const char* str = option.get_description();
-        std::string description = str ? std::string(str) : (to_string() << "Read only option of " << librealsense::get_string(type));
+        std::string description = str ? std::string(str) : (rsutils::string::from() << "Read only option of " << librealsense::get_string(type));
 
         //One message for value
         std_msgs::Float32 option_msg;
@@ -512,35 +511,17 @@ namespace librealsense
         }
     }
 
-    void ros_writer::write_l500_data(device_serializer::sensor_identifier sensor_id, const nanoseconds & timestamp, std::shared_ptr<l500_depth_sensor_interface> l500_depth_sensor)
+    static std::string get_processing_block_extension_name( const std::shared_ptr< processing_block_interface > block )
     {
-        auto intrinsics = l500_depth_sensor->get_intrinsic();
+        // We want to write the block name (as opposed to the extension name):
+        // The block can behave differently and have a different name based on how it was created (e.g., the disparity
+        // filter). This makes new rosbag files incompatible with older librealsense versions.
+        if( block->supports_info( RS2_CAMERA_INFO_NAME ) )
+            return block->get_info( RS2_CAMERA_INFO_NAME );
 
-        std_msgs::Float32MultiArray intrinsics_data;
-        intrinsics_data.data.push_back(intrinsics.resolution.num_of_resolutions);
-        for (auto i = 0; i < intrinsics.resolution.num_of_resolutions; i++)
-        {
-            auto intrins = intrinsics.resolution.intrinsic_resolution[i];
-            intrinsics_data.data.push_back(intrins.raw.pinhole_cam_model.width);
-            intrinsics_data.data.push_back(intrins.raw.pinhole_cam_model.height);
-            intrinsics_data.data.push_back(intrins.raw.zo.x);
-            intrinsics_data.data.push_back(intrins.raw.zo.y);
-
-            intrinsics_data.data.push_back(intrins.world.pinhole_cam_model.width);
-            intrinsics_data.data.push_back(intrins.world.pinhole_cam_model.height);
-            intrinsics_data.data.push_back(intrins.world.zo.x);
-            intrinsics_data.data.push_back(intrins.world.zo.y);
-        }
-
-        intrinsics_data.data.push_back(l500_depth_sensor->read_baseline());
-        write_message(ros_topic::l500_data_blocks_topic(sensor_id), timestamp, intrinsics_data);
-    }
-
-    rs2_extension ros_writer::get_processing_block_extension(const std::shared_ptr<processing_block_interface> block)
-    {
-#define RETURN_IF_EXTENSION(E, T)\
-    if (Is<ExtensionToType<T>::type>(E))\
-    return T;\
+#define RETURN_IF_EXTENSION( B, E )                                                                                    \
+    if( Is< ExtensionToType< E >::type >( B ) )                                                                        \
+        return rs2_extension_type_to_string( E )
  
         RETURN_IF_EXTENSION(block, RS2_EXTENSION_DECIMATION_FILTER);
         RETURN_IF_EXTENSION(block, RS2_EXTENSION_THRESHOLD_FILTER);
@@ -548,38 +529,35 @@ namespace librealsense
         RETURN_IF_EXTENSION(block, RS2_EXTENSION_SPATIAL_FILTER);
         RETURN_IF_EXTENSION(block, RS2_EXTENSION_TEMPORAL_FILTER);
         RETURN_IF_EXTENSION(block, RS2_EXTENSION_HOLE_FILLING_FILTER);
-        RETURN_IF_EXTENSION(block, RS2_EXTENSION_ZERO_ORDER_FILTER);
-        RETURN_IF_EXTENSION(block, RS2_EXTENSION_DEPTH_HUFFMAN_DECODER);
         RETURN_IF_EXTENSION(block, RS2_EXTENSION_HDR_MERGE);
         RETURN_IF_EXTENSION(block, RS2_EXTENSION_SEQUENCE_ID_FILTER);
+        RETURN_IF_EXTENSION(block, RS2_EXTENSION_ROTATION_FILTER);
 
 #undef RETURN_IF_EXTENSION
 
-        throw invalid_value_exception(to_string() << "processing block "<< block->get_info(RS2_CAMERA_INFO_NAME) <<"has no map to extension");
+        return {};
     }
 
     void ros_writer::write_sensor_processing_blocks(device_serializer::sensor_identifier sensor_id, const nanoseconds& timestamp, std::shared_ptr<recommended_proccesing_blocks_interface> proccesing_blocks)
     {
-        rs2_extension ext;
         for (auto block : proccesing_blocks->get_recommended_processing_blocks())
         {
+            std::string name = get_processing_block_extension_name( block );
+            if( name.empty() )
+            {
+                LOG_WARNING( "Failed to get recommended processing block name for sensor " << sensor_id.sensor_index );
+                continue;
+            }
             try
             {
-                try
-                {
-                    ext = get_processing_block_extension(block);
-                }
-                catch (std::exception& e)
-                {
-                    LOG_WARNING("Failed to write proccesing block " << " for sensor " << sensor_id.sensor_index << ". Exception: " << e.what());
-                }
                 std_msgs::String processing_block_msg;
-                processing_block_msg.data = rs2_extension_type_to_string(ext);
-                write_message(ros_topic::post_processing_blocks_topic(sensor_id), timestamp, processing_block_msg);
+                processing_block_msg.data = name;
+                write_message( ros_topic::post_processing_blocks_topic( sensor_id ), timestamp, processing_block_msg );
             }
-            catch (std::exception& e)
+            catch( std::exception & e )
             {
-                LOG_WARNING("Failed to get or write recommended proccesing blocks " << " for sensor " << sensor_id.sensor_index << ". Exception: " << e.what());
+                LOG_WARNING( "Failed to write processing block '" << name << "' for sensor " << sensor_id.sensor_index
+                                                                  << ": " << e.what() );
             }
         }
     }

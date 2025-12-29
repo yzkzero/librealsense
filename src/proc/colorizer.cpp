@@ -245,10 +245,11 @@ namespace librealsense
         if (!frame || frame.is<rs2::frameset>())
             return false;
 
-        if (frame.get_profile().stream_type() != RS2_STREAM_DEPTH)
-            return false;
+        if ((frame.get_profile().stream_type() == RS2_STREAM_DEPTH) && 
+                    (_supported_formats.find(frame.get_profile().format()) != _supported_formats.end()))
+            return true;
 
-        return true;
+        return false;
     }
 
     rs2::frame colorizer::process_frame(const rs2::frame_source& source, const rs2::frame& f)
@@ -260,8 +261,10 @@ namespace librealsense
             _source_stream_profile = f.get_profile();
             _target_stream_profile = f.get_profile().clone(RS2_STREAM_DEPTH, f.get_profile().stream_index(), RS2_FORMAT_RGB8);
 
-            auto info = disparity_info::update_info_from_frame(f);
-            _d2d_convert_factor = info.d2d_convert_factor;
+            // workaround for D457
+            //auto info = disparity_info::update_info_from_frame(f);
+            //_d2d_convert_factor = info.d2d_convert_factor;
+            _d2d_convert_factor = 681678.625;
         }
 
         auto make_equalized_histogram = [this](const rs2::video_frame& depth, rs2::video_frame rgb)

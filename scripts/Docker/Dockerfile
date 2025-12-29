@@ -32,7 +32,7 @@ RUN apt-get update \
 
 # Download sources
 WORKDIR /usr/src
-RUN curl https://codeload.github.com/IntelRealSense/librealsense/tar.gz/refs/tags/v$LIBRS_VERSION -o librealsense.tar.gz 
+RUN curl https://codeload.github.com/realsenseai/librealsense/tar.gz/refs/tags/v$LIBRS_VERSION -o librealsense.tar.gz 
 RUN tar -zxf librealsense.tar.gz \
     && rm librealsense.tar.gz 
 RUN ln -s /usr/src/librealsense-$LIBRS_VERSION /usr/src/librealsense
@@ -59,6 +59,7 @@ FROM ${BASE_IMAGE} as librealsense
 COPY --from=librealsense-builder /opt/librealsense /usr/local/
 COPY --from=librealsense-builder /usr/lib/python3/dist-packages/pyrealsense2 /usr/lib/python3/dist-packages/pyrealsense2
 COPY --from=librealsense-builder /usr/src/librealsense/config/99-realsense-libusb.rules /etc/udev/rules.d/
+COPY --from=librealsense-builder /usr/src/librealsense/config/99-realsense-d4xx-mipi-dfu.rules /etc/udev/rules.d/
 ENV PYTHONPATH=$PYTHONPATH:/usr/local/lib
 
 # Install dep packages

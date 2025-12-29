@@ -1,5 +1,4 @@
-#  minimum required cmake version: 3.1.0
-cmake_minimum_required(VERSION 3.1.0)
+cmake_minimum_required(VERSION 3.8)
 
 if(NOT WIN32)
     SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -pthread")
@@ -8,14 +7,14 @@ endif()
 project(RealsensePCLExamples)
 
 find_package( PCL REQUIRED )
- 
+
 if (PCL_FOUND)
   include_directories(${PCL_INCLUDE_DIRS})
   add_definitions(${PCL_DEFINITIONS})
   link_directories(${PCL_LIBRARY_DIRS})
 endif()
 
-set(DEPENDENCIES realsense2 ${PCL_LIBRARIES})
+list(APPEND DEPENDENCIES ${PCL_LIBRARIES})
 
 find_package(OpenGL)
 if(NOT OPENGL_FOUND)

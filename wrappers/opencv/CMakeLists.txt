@@ -1,11 +1,10 @@
-#  minimum required cmake version: 3.1.0
-cmake_minimum_required(VERSION 3.1.0)
+cmake_minimum_required(VERSION 3.8)
 
 project(RealsenseCVExamples)
 
 find_package(OpenCV REQUIRED)
 
-set(DEPENDENCIES realsense2 ${OpenCV_LIBS})
+list(APPEND DEPENDENCIES ${OpenCV_LIBS})
 
 add_subdirectory(imshow)
 add_subdirectory(grabcuts)

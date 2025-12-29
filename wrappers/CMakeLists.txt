@@ -1,5 +1,4 @@
-#  minimum required cmake version: 3.1.0
-cmake_minimum_required(VERSION 3.1.0)
+cmake_minimum_required(VERSION 3.8)
 
 project(RealsenseWrappers)
 
@@ -9,13 +8,10 @@ if (BUILD_PYTHON_BINDINGS OR BUILD_PYTHON_DOCS)
     if (NOT INTERNET_CONNECTION)
         message(WARNING "No internet connection. Cloning Python bindings may fail")
     endif()
-    add_subdirectory(python)        
-   
+    add_subdirectory(python)
+
 endif()
 
-if (BUILD_NODEJS_BINDINGS)
-  add_subdirectory(nodejs)
-endif()
 
 if (BUILD_CV_EXAMPLES)
   add_subdirectory(opencv)

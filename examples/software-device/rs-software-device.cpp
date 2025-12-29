@@ -53,6 +53,7 @@ public:
                 }
             }
         color_frame.frame = std::move(pixels_color);
+        stbi_image_free( realsense_logo );
     }
 
     synthetic_frame& get_synthetic_texture()
@@ -142,9 +143,6 @@ int main(int argc, char * argv[]) try
                                 W, H, 60, BPP,
                                 RS2_FORMAT_Z16, depth_intrinsics });
 
-    depth_sensor.add_read_only_option(RS2_OPTION_DEPTH_UNITS, 0.001f);
-
-
     auto color_stream = color_sensor.add_video_stream({  RS2_STREAM_COLOR, 0, 1, texture.x,
                                 texture.y, 60, texture.bpp,
                                 RS2_FORMAT_RGBA8, color_intrinsics });
@@ -174,7 +172,7 @@ int main(int argc, char * argv[]) try
                                        depth_frame.x * depth_frame.bpp,  // Stride
                                        depth_frame.bpp,
                                        timestamp, domain, frame_number,
-                                       depth_stream } );
+                                       depth_stream, 0.001f } );  // depth unit
 
 
         color_sensor.on_video_frame( { texture.frame.data(),     // Frame pixels from capture API
@@ -194,8 +192,10 @@ int main(int argc, char * argv[]) try
         if (depth && color)
         {
             if (auto as_depth = depth.as<rs2::depth_frame>())
+            {
+                pc.map_to(color);
                 points = pc.calculate(as_depth);
-            pc.map_to(color);
+            }
 
             // Upload the color frame to OpenGL
             app_state.tex.upload(color);

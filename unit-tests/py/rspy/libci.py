@@ -47,7 +47,9 @@ def run( cmd, stdout = None, timeout = 200, append = False ):
     start_time = time.time()
     try:
         log.debug_indent()
-        if stdout and stdout != subprocess.PIPE:
+        if stdout is None:
+            sys.stdout.flush()
+        elif stdout and stdout != subprocess.PIPE:
             if append:
                 handle = open( stdout, "a" )
                 handle.write(
@@ -87,6 +89,7 @@ class TestConfig( ABC ):  # Abstract Base Class
         self._tags = set()
         self._flags = set()
         self._timeout = 200
+        self._retries = 0
         self._context = context
         self._donotrun = False
 
@@ -97,8 +100,10 @@ class TestConfig( ABC ):  # Abstract Base Class
             log.d( 'priority:', self._priority )
         if self._timeout != 200:
             log.d( 'timeout:', self._timeout )
+        if self._retries != 0:
+            log.d( 'retries:', self._retries )
         if len( self._tags ) > 1:
-            log.d( 'tags:', { tag for tag in self._tags if tag != "exe" and tag != "py" } )
+            log.d( 'tags:', self._tags )
         if self._flags:
             log.d( 'flags:', self._flags )
         if len( self._configurations ) > 1:
@@ -116,6 +121,10 @@ class TestConfig( ABC ):  # Abstract Base Class
     @property
     def timeout( self ):
         return self._timeout
+
+    @property
+    def retries( self ):
+        return self._retries
 
     @property
     def tags( self ):
@@ -178,25 +187,36 @@ class TestConfigFromText( TestConfig ):
                 not_context = directive_context.startswith('!')
                 if not_context:
                     directive_context = directive_context[1:]
-                # not_context | directive_ctx==context | RESULT
-                # ----------- | ---------------------- | ------
-                #      0      |           0            | IGNORE
-                #      0      |           1            | USE
-                #      1      |           0            | USE
-                #      1      |           1            | IGNORE
-                if not_context == (directive_context == self.context):
+                # not_context | directive_ctx in context | RESULT
+                # ----------- | ------------------------ | ------
+                #      0      |            0             | IGNORE
+                #      0      |            1             | USE
+                #      1      |            0             | USE
+                #      1      |            1             | IGNORE
+                if not_context == (self._context and directive_context in self._context):
                     # log.d( "directive", line['line'], "ignored because of context mismatch with running context",
-                    #       self.context)
+                    #       self._context)
                     continue
             if directive == 'device':
                 # log.d( '    configuration:', params )
+                params_lower_list = text_params.lower().split()
                 if not params:
                     log.e( source + '+' + str( line['index'] ) + ': device directive with no devices listed' )
-                elif 'each' in text_params.lower() and len( params ) > 1:
+                elif sum(s.startswith('each(') for s in params_lower_list) > 1:
                     log.e( source + '+' + str(
-                            line['index'] ) + ': each() cannot be used in combination with other specs', params )
-                elif 'each' in text_params.lower() and not re.fullmatch( r'each\(.+\)', text_params, re.IGNORECASE ):
-                    log.e( source + '+' + str( line['index'] ) + ': invalid \'each\' syntax:', params )
+                            line['index'] ) + ': each() cannot be used multiple times in same line', params )
+                elif params_lower_list[0].startswith('each('):
+                    if not re.fullmatch( r'each\(.+\)', params_lower_list[0], re.IGNORECASE ):
+                        log.e( source + '+' + str( line['index'] ) + ': invalid \'each\' syntax:', params )
+                    else:
+                        for param in params_lower_list[1:]:
+                            if not param.startswith("!"):
+                                log.e(source + '+' + str(line['index']) + ': invalid syntax:', params,
+                                      '. All device names after \'' + params[0] +
+                                      '\' must start with \'!\' in order to skip them')
+                                break
+                        else:
+                            self._configurations.append( params )
                 else:
                     self._configurations.append( params )
             elif directive == 'priority':
@@ -208,6 +228,12 @@ class TestConfigFromText( TestConfig ):
             elif directive == 'timeout':
                 if len( params ) == 1 and params[0].isdigit():
                     self._timeout = int( params[0] )
+                else:
+                    log.e( source + '+' + str( line['index'] ) + ': timeout directive with invalid parameters:',
+                           params )
+            elif directive == 'retries':
+                if len( params ) == 1 and params[0].isdigit():
+                    self._retries = int( params[0] )
                 else:
                     log.e( source + '+' + str( line['index'] ) + ': timeout directive with invalid parameters:',
                            params )
@@ -354,8 +380,10 @@ class PyTest( Test ):
         log.d( 'script:', self.path_to_script )
         Test.debug_dump( self )
 
-    @property
-    def command( self ):
+    def command( self, to_file ):
+        """
+        :param to_file: True if stdout is redirected to a file (so colors make no sense)
+        """
         cmd = [sys.executable]
         #
         # PYTHON FLAGS
@@ -378,16 +406,20 @@ class PyTest( Test ):
             if log.is_debug_on():
                 cmd += ['--debug']
             #
-            if log.is_color_on():
+            if to_file:
+                pass
+            elif log.is_color_on():
                 cmd += ['--color']
+            elif log.is_color_disabled():
+                cmd += ['--no-color']
             #
             if self.config.context:
-                cmd += ['--context', self.config.context]
+                cmd += ['--context', ' '.join(self.config.context)]
         return cmd
 
     def run_test( self, configuration = None, log_path = None, opts = set() ):
         try:
-            cmd = self.command
+            cmd = self.command( to_file = log_path and log_path != subprocess.PIPE )
             if opts:
                 cmd += [opt for opt in opts]
             run( cmd, stdout=log_path, append=self.ran, timeout=self.config.timeout )
@@ -407,8 +439,6 @@ class ExeTest( Test ):
         :param context: context in which the test will run
         """
         global unit_tests_dir
-        if exe and not os.path.isfile( exe ):
-            log.d( "Tried to create exe test with invalid exe file: " + exe )
         Test.__init__( self, testname )
         self.exe = exe
 
@@ -417,9 +447,20 @@ class ExeTest( Test ):
             self._config = TestConfigFromCpp( unit_tests_dir + os.sep + relative_test_path, context )
         else:
             self._config = TestConfig(context)
+            self._config.tags.add( 'exe' )
 
-    @property
-    def command( self ):
+    def debug_dump( self ):
+        if self.exe:
+            if not os.path.isfile( self.exe ):
+                log.d( "exe does not exist: " + self.exe )
+            else:
+                log.d( 'exe:', self.exe )
+        Test.debug_dump( self )
+
+    def command( self, to_file ):
+        """
+        :param to_file: True if stdout is redirected to a file (so colors make no sense)
+        """
         cmd = [self.exe]
         if 'custom-args' not in self.config.flags:
             # Assume we're a Catch2 exe, so:
@@ -429,17 +470,17 @@ class ExeTest( Test ):
                 cmd += ['-d', 'yes']  # show durations for each test-case
                 # cmd += ['--success']  # show successful assertions in output
                 cmd += ['--debug']
-            # if log.is_color_on():
+            # if not to_file and log.is_color_on():
             #    cmd += ['--use-colour', 'yes']
             if self.config.context:
-                cmd += ['--context', self.config.context]
+                cmd += ['--context', ' '.join(self.config.context)]
         return cmd
 
     def run_test( self, configuration = None, log_path = None, opts = set() ):
         if not self.exe:
             raise RuntimeError("Tried to run test " + self.name + " with no exe file provided")
         try:
-            cmd = self.command
+            cmd = self.command( to_file = log_path and log_path != subprocess.PIPE )
             if opts:
                 cmd += [opt for opt in opts]
             run( cmd, stdout=log_path, append=self.ran, timeout=self.config.timeout )

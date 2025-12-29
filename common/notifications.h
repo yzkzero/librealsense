@@ -71,7 +71,7 @@ namespace rs2
         double timestamp = 0.0;
         rs2_log_severity severity = RS2_LOG_SEVERITY_NONE;
         std::chrono::system_clock::time_point created_time;
-        rs2_notification_category category;
+        rs2_notification_category category = RS2_NOTIFICATION_CATEGORY_UNKNOWN_ERROR;
         bool to_close = false; // true when user clicks on close notification
 
         int width = 320;
@@ -122,7 +122,7 @@ namespace rs2
         bool done() const { return _done; }
         bool started() const { return _started; }
         bool failed() const { return _failed; }
-        const std::string& get_log() const { return _log; }
+        const std::string get_log() const;
         void reset();
 
         void check_error(std::string& error) { if (_failed) error = _last_error; }
@@ -141,7 +141,7 @@ namespace rs2
         bool _failed = false;
         float _progress = 0;
 
-        std::mutex _log_lock;
+        mutable std::mutex _log_lock;
         std::string _last_error;
         std::string _process_name;
     };

@@ -31,7 +31,10 @@ public enum StreamFormat {
     W10(27),
     Z16H(28),
     FG(29),
-    Y411(30);
+    Y411(30),
+    Y16I(31),
+    M420(32),
+    COMBINED_MOTION(33);
     private final int mValue;
 
     private StreamFormat(int value) { mValue = value; }

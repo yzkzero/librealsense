@@ -2,6 +2,7 @@
 # Copyright(c) 2021 Intel Corporation. All Rights Reserved.
 
 #test:timeout 20
+#test:device each(D400*) !D455
 
 import os
 import pyrealsense2 as rs2

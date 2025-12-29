@@ -17,7 +17,6 @@
 #include <string>
 #include <regex>
 #include <Sddl.h>
-#include "../common/utilities/string/windows.h"
 
 #pragma comment(lib, "cfgmgr32.lib")
 #pragma comment(lib, "setupapi.lib")
@@ -26,9 +25,7 @@
 #include <devpkey.h>  // DEVPKEY_...
 
 //https://docs.microsoft.com/en-us/windows-hardware/drivers/usbcon/supported-usb-classes#microsoft-provided-usb-device-class-drivers
-#ifndef WITH_TRACKING
 DEFINE_GUID(GUID_DEVINTERFACE_USB_DEVICE, 0xA5DCBF10L, 0x6530, 0x11D2, 0x90, 0x1F, 0x00, 0xC0, 0x4F, 0xB9, 0x51, 0xED);
-#endif
 DEFINE_GUID(GUID_DEVINTERFACE_IMAGE_WIN10, 0x6bdd1fc6L, 0x810f, 0x11d0, 0xbe, 0xc7, 0x08, 0x00, 0x2b, 0xe2, 0x09, 0x2f);
 DEFINE_GUID(GUID_DEVINTERFACE_CAMERA_WIN10, 0xca3e7ab9, 0xb4c3, 0x4ae6, 0x82, 0x51, 0x57, 0x9e, 0xf9, 0x33, 0x89, 0x0f);
 
@@ -99,33 +96,33 @@ namespace librealsense
             if(tokens.size() < 1 || (tokens[0] != R"(\\?\usb)" && tokens[0] != R"(\\?\hid)")) return false; // Not a USB device
             if(tokens.size() < 3)
             {
-                LOG_ERROR("malformed usb device path: " << name);
+                LOG_WARNING( "malformed usb device path: " << name );
                 return false;
             }
 
             auto ids = tokenize(tokens[1], '&');
             if(ids[0].size() != 8 || ids[0].substr(0,4) != "vid_" || !(std::istringstream(ids[0].substr(4,4)) >> std::hex >> vid))
             {
-                LOG_ERROR("malformed vid string: " << tokens[1]);
+                LOG_DEBUG("malformed vid string: " << tokens[1]);
                 return false;
             }
 
             if(ids[1].size() != 8 || ids[1].substr(0,4) != "pid_" || !(std::istringstream(ids[1].substr(4,4)) >> std::hex >> pid))
             {
-                LOG_ERROR("malformed pid string: " << tokens[1]);
+                LOG_DEBUG( "malformed pid string: " << tokens[1] );
                 return false;
             }
 
             if(ids.size() > 2 && (ids[2].size() != 5 || ids[2].substr(0,3) != "mi_" || !(std::istringstream(ids[2].substr(3,2)) >> mi)))
             {
-                LOG_ERROR("malformed mi string: " << tokens[1]);
+                LOG_DEBUG( "malformed mi string: " << tokens[1] );
                 return false;
             }
 
             ids = tokenize(tokens[2], '&');
             if(ids.size() == 0)
             {
-                LOG_ERROR("malformed id string: " << tokens[2]);
+                LOG_DEBUG( "malformed id string: " << tokens[2] );
                 return false;
             }
 
@@ -322,7 +319,7 @@ namespace librealsense
                 {
                     if (handle_node(targetKey, h, i)) // exit condition
                     {
-                        return std::make_tuple(utilities::string::windows::win_to_utf(fullPath.c_str()) + " " + std::to_string(i),
+                        return std::make_tuple(rsutils::string::windows::win_to_utf(fullPath.c_str()) + " " + std::to_string(i),
                                                 static_cast<usb_spec>(pConInfo->DeviceDescriptor.bcdUSB));
                     }
                 }
@@ -346,7 +343,7 @@ namespace librealsense
                 std::vector<WCHAR> buf( cch_required + 1 );
                 if( CM_Get_Device_ID( devinst, buf.data(), cch_required, 0 ) != CR_SUCCESS )
                     return false;
-                *p_out_str = utilities::string::windows::win_to_utf( buf.data() );
+                *p_out_str = rsutils::string::windows::win_to_utf( buf.data() );
             }
 
             return true;
@@ -465,7 +462,7 @@ namespace librealsense
             str.reserve( cb );
             if( CM_Get_DevNode_Property( get(), &property, &type, (PBYTE) str.data(), &cb, 0 ) != CR_SUCCESS )
                 return std::string();
-            return utilities::string::windows::win_to_utf( str.data() );
+            return rsutils::string::windows::win_to_utf( str.data() );
         }
 
 
@@ -494,14 +491,16 @@ namespace librealsense
                 }
 
                 // Enumerate all imaging devices
-                for (int member_index = 0; ; ++member_index)
+                // 0x1000 ia a large enough limit to permit maximum connection, while avoiding infinite loop
+                for (DWORD member_index = 0; member_index < 0x1000; ++member_index)
                 {
                     // Get device information element from the device information set
                     if (SetupDiEnumDeviceInfo(device_info, member_index, &devInfo) == FALSE)
                     {
-                        if( GetLastError() == ERROR_NO_MORE_ITEMS )
-                            break; // stop when none left
-                        continue; // silently ignore other errors
+                        DWORD last_error = GetLastError();
+                        if (last_error == ERROR_NO_MORE_ITEMS) 
+                            break; // stop when none left 
+                        continue; // silently ignore other errors }
                     }
 
                     std::string parent_uid;
@@ -555,7 +554,7 @@ namespace librealsense
                 LOG_ERROR("CM_Get_Device_ID failed");
                 return false;
             }
-            std::string parent_id = utilities::string::windows::win_to_utf( pInstID2.data() );
+            std::string parent_id = rsutils::string::windows::win_to_utf( pInstID2.data() );
             //LOG_DEBUG( "...  parent device id " << parent_id );
             uint16_t parent_vid, parent_pid, parent_mi;
             parse_usb_path_from_device_id( parent_vid, parent_pid, parent_mi, parent_uid, parent_id );  // may fail -- but we try to get the parent_uid
@@ -605,7 +604,7 @@ namespace librealsense
             uint16_t mi = 0;
             std::string guid;
             std::wstring ws(detail_data->DevicePath);
-            std::string path(utilities::string::windows::win_to_utf( detail_data->DevicePath ));
+            std::string path(rsutils::string::windows::win_to_utf( detail_data->DevicePath ));
 
             /* Parse the following USB path format = \?usb#vid_vvvv&pid_pppp&mi_ii#aaaaaaaaaaaaaaaa#{gggggggg-gggg-gggg-gggg-gggggggggggg} */
             parse_usb_path_multiple_interface(vid, pid, mi, parent_uid, path, guid);
@@ -760,7 +759,7 @@ namespace librealsense
 
         PSECURITY_DESCRIPTOR make_allow_all_security_descriptor(void)
         {
-            WCHAR *pszStringSecurityDescriptor;
+            WCHAR const *pszStringSecurityDescriptor;
             pszStringSecurityDescriptor = L"D:(A;;GA;;;WD)(A;;GA;;;AN)S:(ML;;NW;;;ME)";
             PSECURITY_DESCRIPTOR pSecDesc;
             if (!ConvertStringSecurityDescriptorToSecurityDescriptor(

@@ -124,7 +124,7 @@ enum class ERealSenseOptionType : uint8
     INVALIDATION_BYPASS                        , /**< Enable\disable pixel invalidation */
     AMBIENT_LIGHT                              , /**< Change the depth ambient light see rs2_ambient_light for values */
     DIGITAL_GAIN = AMBIENT_LIGHT               , /**< Change the depth digital gain see rs2_digital_gain for values */
-    SENSOR_MODE                                , /**< The resolution mode: see rs2_sensor_mode for values */
+    SENSOR_MODE                                , /**< Deprecated!! - The resolution mode: see rs2_sensor_mode for values */
     EMITTER_ALWAYS_ON                          , /**< Enable Laser On constantly (GS SKU Only) */
     THERMAL_COMPENSATION                       , /**< Depth Thermal Compensation for selected D400 SKUs */
     TRIGGER_CAMERA_ACCURACY_HEALTH             , /**< DEPRECATED! */
@@ -145,6 +145,8 @@ enum class ERealSenseOptionType : uint8
     TRANSMITTER_FREQUENCY                      , /**< Change transmitter frequency, increasing effective range over sharpness. */
     VERTICAL_BINNING                           , /**< Enables vertical binning which increases the maximal sensed distance. */
     RECEIVER_SENSITIVITY                       , /**< Control the receiver sensitivity to incoming light, both projected and ambient. */
+    EMITTER_FREQUENCY                          , /**< Select emitter (laser) frequency:  0 --> 57[KHZ], 1 --> 97[KHZ] */
+    DEPTH_AUTO_EXPOSURE_MODE                   , /**< Select depth sensor auto exposure mode:  0 --> REGULAR 1 --> ACCELERATED */
 };
 
 UENUM(Blueprintable)

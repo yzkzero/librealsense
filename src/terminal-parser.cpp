@@ -3,6 +3,8 @@
 
 #include "terminal-parser.h"
 #include <iostream>
+#include <rsutils/string/from.h>
+
 
 namespace librealsense
 {
@@ -30,12 +32,6 @@ namespace librealsense
         file_argument_to_blob(params);
 
         auto raw_data = build_raw_command_data(command, params);
-
-        for (auto b : raw_data)
-        {
-            cout << hex << fixed << setfill('0') << setw(2) << (int)b << " ";
-        }
-        cout << endl;
 
         return raw_data;
     }
@@ -65,10 +61,13 @@ namespace librealsense
             data_vec.insert(data_vec.begin(), data.begin(), data.end());
             return data_vec;
         }
-        else
+        else if (response.size() == 4) // if the response contains only the opcode, there's no response other than the opcode, return success message
         {
-            return response;
+            unsigned opcode = response[0];
+            auto str = (rsutils::string::from() << "Command succeeded, returned 0x" << hex << opcode).str();
+            return std::vector<uint8_t>(str.begin(), str.end());
         }
+        return response;
     }
 
     vector<uint8_t> terminal_parser::build_raw_command_data(const command_from_xml& command, const vector<string>& params) const
@@ -108,10 +107,10 @@ namespace librealsense
         if (tokens.empty())
             throw runtime_error("Invalid input! - no arguments provided");
 
-        auto command_str = utilities::string::to_lower(tokens.front());
+        auto command_str = rsutils::string::to_lower(tokens.front());
         auto it = _cmd_xml.commands.find(command_str);
         if (it == _cmd_xml.commands.end())
-            throw runtime_error(to_string() << "Command " << command_str << " was not found!");
+            throw runtime_error( rsutils::string::from() << "Command " << command_str << " was not found!" );
 
         command = it->second;
         for (auto i = 1; i < tokens.size(); ++i)

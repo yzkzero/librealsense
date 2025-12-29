@@ -25,7 +25,7 @@ namespace rs2 {
                     uint32_t ieee754 = 0;
 
                     if (f != 0.) {
-                        int sign = 0;
+                        uint32_t sign = 0;
 
                         if (f < 0) {
                             sign = 1;
@@ -79,7 +79,7 @@ namespace rs2 {
                         return;
                     }
 
-                    if (frames_map_get_and_set(depthframe.get_profile().stream_type(), depthframe.get_frame_number())) {
+                    if (frames_map_get_and_set(depthframe.get_profile().stream_type(), depthframe.get_profile().stream_index(), depthframe.get_frame_number())) {
                         return;
                     }
 

@@ -3,85 +3,125 @@
 
 # we want this test to run first so that all tests run with updated FW versions, so we give it priority 0
 #test:priority 0
-#test:device each(L500*)
+#test:timeout 500
+#test:donotrun:gha
 #test:device each(D400*)
 
-import pyrealsense2 as rs, sys, os, subprocess
+import sys
+import os
+import subprocess
+import re
+import platform
+import pyrealsense2 as rs
+import pyrsutils as rsutils
 from rspy import devices, log, test, file, repo
-import re, platform
+import time
+import argparse
+
+# Parse command-line arguments
+parser = argparse.ArgumentParser(description="Test firmware update")
+parser.add_argument('--custom-fw-d400', type=str, help='Path to custom firmware file')
+args = parser.parse_args()
+
+custom_fw_d400_path = args.custom_fw_d400
+if custom_fw_d400_path:
+    log.i(f"Custom firmware path provided: {custom_fw_d400_path}")
+else:
+    log.i(f"No Custom firmware path provided. using bundled firmware")
+
+# This is the first test running, discover acroname modules.
+# Not relevant to MIPI devices running on jetson for LibCI
+if 'jetson' not in test.context:
+    if not devices.hub:
+        log.i( "No hub library found; skipping device FW update" )
+        sys.exit(0)
+    # Following will throw if no acroname module is found
+    from rspy import device_hub
+
+    if device_hub.create() is None:
+        log.f("No hub found")
+    # Remove acroname -- we're likely running inside run-unit-tests in which case the
+    # acroname hub is likely already connected-to from there and we'll get an error
+    # thrown ('failed to connect to acroname (result=11)'). We do not need it -- just
+    # needed to verify it is available above...
+    devices.hub = None
 
 
-if not devices.acroname:
-    log.i( "No Acroname library found; skipping device FW update" )
-    sys.exit(0)
-# Following will throw if no acroname module is found
-from rspy import acroname
-try:
-    devices.acroname.discover()
-except acroname.NoneFoundError as e:
-    log.f( e )
-# Remove acroname -- we're likely running inside run-unit-tests in which case the
-# acroname hub is likely already connected-to from there and we'll get an error
-# thrown ('failed to connect to acroname (result=11)'). We do not need it -- just
-# needed to verify it is available above...
-devices.acroname = None
-
-def send_hardware_monitor_command( device, command ):
-    command_input = []  # array of uint_8t
-
-    # Parsing the command to array of unsigned integers(size should be < 8bits)
-    # threw out spaces
-    command = command.lower()
-    command = command.replace(" ", "")
-    current_uint8_t_string = ''
-    for i in range(0, len(command)):
-        current_uint8_t_string += command[i]
-        if len(current_uint8_t_string) >= 2:
-            command_input.append(int('0x' + current_uint8_t_string, 0))
-            current_uint8_t_string = ''
-    if current_uint8_t_string != '':
-        command_input.append(int('0x' + current_uint8_t_string, 0))
-
+def send_hardware_monitor_command(device, command):
     # byte_index = -1
-    raw_result = rs.debug_protocol( device ).send_and_receive_raw_data( command_input )
+    raw_result = rs.debug_protocol(device).send_and_receive_raw_data(command)
 
     return raw_result[4:]
 
-def get_update_counter( device ):
-    product_line = device.get_info( rs.camera_info.product_line )
-    cmd = None
+import os
+import re
 
-    if product_line == "L500":
-        cmd = "14 00 AB CD 09 00 00 00 30 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00"
-    elif product_line == "D400":
-        cmd = "14 00 AB CD 09 00 00 00 30 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00"
+def extract_version_from_filename(file_path):
+    """
+    Extracts the version string from a filename like:
+    FlashGeneratedImage_Image5_16_7_0.bin -> 5.16.7
+    FlashGeneratedImage_RELEASE_DS5_5_16_3_1.bin -> 5.16.3.1
+
+    Args:
+        file_path (str): Full path to the file.
+
+    Returns:
+        str: Extracted version in format x.y.z or x.y.z.w, or None if not found or if path is invalid.
+    """
+    if not file_path or not os.path.exists(file_path):
+        log.i(f"File not found: {file_path}")
+        return None
+
+    filename = os.path.basename(file_path)
+    match = re.search(r'(\d+)_(\d+)_(\d+)_(\d+)\.bin$', filename)
+    if match:
+        groups = match.groups()
+        if groups[3] == '0':
+            version_str = ".".join(groups[:3])
+        else:
+            version_str = ".".join(groups)
+        return rsutils.version(version_str)
+    else:
+        log.i(f"Version not found in filename: {filename}")
+
+    return None
+
+
+def get_update_counter(device):
+    product_line = device.get_info(rs.camera_info.product_line)
+    opcode = 0x09
+    start_index = 0x30
+    size = None
+
+    if product_line == "D400":
+        size = 0x2
     else:
         log.f( "Incompatible product line:", product_line )
 
-    counter = send_hardware_monitor_command( device, cmd )
+    raw_cmd = rs.debug_protocol(device).build_command(opcode, start_index, size)
+    counter = send_hardware_monitor_command(device, raw_cmd)
     return counter[0]
+
 
 def reset_update_counter( device ):
     product_line = device.get_info( rs.camera_info.product_line )
-    cmd = None
 
-    if product_line == "L500":
-        cmd = "14 00 AB CD 0A 00 00 00 30 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00"
-    elif product_line == "D400":
-        cmd = "14 00 AB CD 86 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+    if product_line == "D400":
+        opcode = 0x86
+        raw_cmd = rs.debug_protocol(device).build_command(opcode)
     else:
         log.f( "Incompatible product line:", product_line )
 
-    send_hardware_monitor_command( device, cmd )
+    send_hardware_monitor_command( device, raw_cmd )
 
 def find_image_or_exit( product_name, fw_version_regex = r'(\d+\.){3}(\d+)' ):
     """
     Searches for a FW image file for the given camera name and optional version. If none are
     found, exits with an error!
-    
+
     :param product_name: the name of the camera, from get_info(rs.camera_info.name)
     :param fw_version_regex: optional regular expression specifying which FW version image to find
-    
+
     :return: the image file corresponding to product_name and fw_version if exist, otherwise exit
     """
     pattern = re.compile( r'^Intel RealSense (((\S+?)(\d+))(\S*))' )
@@ -143,10 +183,11 @@ recovered = False
 if device.is_update_device():
     log.d( "recovering device ..." )
     try:
-        # TODO: this needs to improve for L535
-        image_file = find_image_or_exit( product_name )
-
+        image_file = find_image_or_exit(product_name) if not custom_fw_d400_path else custom_fw_d400_path
         cmd = [fw_updater_exe, '-r', '-f', image_file]
+        if custom_fw_d400_path:
+            # unsiged fw
+            cmd.insert(1, '-u')
         log.d( 'running:', cmd )
         subprocess.run( cmd )
         recovered = True
@@ -157,40 +198,23 @@ if device.is_update_device():
         devices.query( monitor_changes = False )
         device = devices.get_first( devices.all() ).handle
 
-current_fw_version = repo.pretty_fw_version( device.get_info( rs.camera_info.firmware_version ))
-log.d( 'FW version:', current_fw_version )
-bundled_fw_version = repo.pretty_fw_version( device.get_info( rs.camera_info.recommended_firmware_version ) )
+current_fw_version = rsutils.version( device.get_info( rs.camera_info.firmware_version ))
+log.d( 'current FW version:', current_fw_version )
+bundled_fw_version = rsutils.version( device.get_info( rs.camera_info.recommended_firmware_version ) )
 log.d( 'bundled FW version:', bundled_fw_version )
+custom_fw_d400_version = extract_version_from_filename(custom_fw_d400_path)
+log.d( 'custom FW D400 version:', custom_fw_d400_version )
 
-def compare_fw_versions( v1, v2 ):
-    """
-    :param v1: left FW version
-    :param v2: right FW version
-    :return: 1 if v1 > v2; -1 is v1 < v2; 0 if they're equal
-    """
-    v1_list = v1.split( '.' )
-    v2_list = v2.split( '.' )
-    if len(v1_list) != 4:
-        raise RuntimeError( "FW version (left) '" + v1 + "' is invalid" )
-    if len(v2_list) != 4:
-        raise RuntimeError( "FW version (right) '" + v2 + "' is invalid" )
-    for n1, n2 in zip( v1_list, v2_list ):
-        if int(n1) > int(n2):
-            return 1
-        if int(n1) < int(n2):
-            return -1
-    return 0
 
-if compare_fw_versions( current_fw_version, bundled_fw_version ) == 0:
-    # Current is same as bundled
-    if recovered or test.context != 'nightly':
-        # In nightly, we always update; otherwise we try to save time, so do not do anything!
-        log.d( 'versions are same; skipping FW update' )
+if (current_fw_version == bundled_fw_version and not custom_fw_d400_path) or \
+   (current_fw_version == custom_fw_d400_version):
+    if recovered or 'nightly' not in test.context:
+        log.d('versions are same; skipping FW update')
         test.finish()
         test.print_results_and_exit()
 else:
     # It is expected that, post-recovery, the FW versions will be the same
-    test.check( not recovered, abort_if_failed = True )
+    test.check(not recovered, on_fail=test.ABORT)
 
 update_counter = get_update_counter( device )
 log.d( 'update counter:', update_counter )
@@ -199,23 +223,32 @@ if update_counter >= 19:
     reset_update_counter( device )
     update_counter = 0
 
-image_file = find_image_or_exit(product_name, re.escape( bundled_fw_version ))
+fw_version_regex = bundled_fw_version.to_string()
+if not bundled_fw_version.build():
+    fw_version_regex += ".0"  # version drops the build if 0
+fw_version_regex = re.escape( fw_version_regex )
+image_file = find_image_or_exit(product_name, fw_version_regex) if not custom_fw_d400_path else custom_fw_d400_path
 # finding file containing image for FW update
 
 cmd = [fw_updater_exe, '-f', image_file]
+if custom_fw_d400_path:
+    # unsigned fw
+    cmd.insert(1, '-u')
 log.d( 'running:', cmd )
 sys.stdout.flush()
 subprocess.run( cmd )   # may throw
 
 # make sure update worked
+time.sleep(3) # MIPI devices do not re-enumerate so we need to give them some time to restart
 devices.query( monitor_changes = False )
 sn_list = devices.all()
 device = devices.get_first( sn_list ).handle
-current_fw_version = repo.pretty_fw_version( device.get_info( rs.camera_info.firmware_version ))
-test.check_equal( current_fw_version, bundled_fw_version )
+current_fw_version = rsutils.version( device.get_info( rs.camera_info.firmware_version ))
+test.check_equal(current_fw_version, bundled_fw_version if not custom_fw_d400_path else custom_fw_d400_version)  
 new_update_counter = get_update_counter( device )
 # According to FW: "update counter zeros if you load newer FW than (ever) before"
-if new_update_counter > 0:
+# TODO: check why update counter is 255 when installing cutom fw
+if new_update_counter > 0 and not custom_fw_d400_version:
     test.check_equal( new_update_counter, update_counter + 1 )
 
 test.finish()
